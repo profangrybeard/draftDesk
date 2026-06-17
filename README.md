@@ -15,9 +15,11 @@ Define your game's **player-movement metrics** (door size, step rise/run, ceilin
 3. Rebuild the editor target when prompted.
 
 ## Use
-- Drop an **ADraftDeskGenerator** into a level.
-- Assign a world-aligned **Grid Material** (so 1 grid square = 1 m at any scale).
-- Edit the **Metrics** in the Details panel — the greybox rebuilds in place.
+1. **Author the spec.** Create a `UDraftDeskSpec` Data Asset and set your metrics — this is the single source of truth.
+2. **Blockout.** Drop an `ADraftDeskGenerator` into the level and point its `Spec` at that asset. It builds a room→hall→room greybox (world-aligned grid by default) and **rebuilds live** when you edit the spec.
+3. **Game feel.** Make a `GameMode` that consumes the same spec — either subclass `ADraftDeskGameMode` or, in your own GameMode, hold a `Spec` and call `UDraftDeskStatics::ApplyLocomotion(Pawn, Spec)` on spawn. It pushes `RunSpeed → MaxWalkSpeed` etc. onto the pawn's `CharacterMovementComponent`.
+
+> **Important — set a real pawn.** `ADraftDeskGameMode` applies the spec but does **not** pick your character (the plugin can't know it). In your GameMode, set **`DefaultPawnClass` to your playable character** (one with input + a camera). A bare `ACharacter` has a movement component but no input, so it spawns and just stands there.
 
 ## Layout
 - `Source/DraftDesk/` — C++ module
