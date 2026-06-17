@@ -1,0 +1,20 @@
+# Normalize all text to LF in the repository; checkout native on each OS.
+* text=auto eol=lf
+
+# Source / config (explicitly text)
+*.cpp   text
+*.h     text
+*.cs    text
+*.uplugin text
+*.json  text
+*.md    text
+*.ini   text
+
+# Unreal binary assets — never diff/merge or alter
+*.uasset binary
+*.umap   binary
+
+# Other binaries
+*.png binary
+*.jpg binary
+*.pdb binary
