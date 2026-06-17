@@ -17,15 +17,26 @@ ADraftDeskGenerator::ADraftDeskGenerator()
 	Blocks = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("Blocks"));
 	SetRootComponent(Blocks);
 	Blocks->SetMobility(EComponentMobility::Movable);
+	Blocks->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Blocks->SetCollisionProfileName(TEXT("BlockAll"));
 
-	// Engine unit cube is 100uu; instances scale it to each box size.
+	Columns = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("Columns"));
+	Columns->SetupAttachment(Blocks);
+	Columns->SetMobility(EComponentMobility::Movable);
+	Columns->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Columns->SetCollisionProfileName(TEXT("BlockAll"));
+
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
 	{
 		Blocks->SetStaticMesh(CubeMesh.Object);
 	}
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (CylMesh.Succeeded())
+	{
+		Columns->SetStaticMesh(CylMesh.Object);
+	}
 
-	// Default to the plugin's world-aligned grid (ships with draftDesk).
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GridMat(TEXT("/DraftDesk/Materials/M_DraftDeskGrid.M_DraftDeskGrid"));
 	if (GridMat.Succeeded())
 	{
@@ -43,8 +54,6 @@ void ADraftDeskGenerator::OnConstruction(const FTransform& Transform)
 void ADraftDeskGenerator::PostRegisterAllComponents()
 {
 	Super::PostRegisterAllComponents();
-
-	// Live-refresh: rebuild whenever our spec asset (the single source of truth) is edited.
 	if (GIsEditor && !PropertyChangedHandle.IsValid())
 	{
 		PropertyChangedHandle = FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(
@@ -73,11 +82,20 @@ void ADraftDeskGenerator::HandleObjectPropertyChanged(UObject* Object, FProperty
 
 void ADraftDeskGenerator::AddBox(const FVector& Center, const FVector& Size)
 {
-	if (!Blocks)
+	if (Blocks)
 	{
-		return;
+		Blocks->AddInstance(FTransform(FRotator::ZeroRotator, Center, Size / 100.f));
 	}
-	Blocks->AddInstance(FTransform(FRotator::ZeroRotator, Center, Size / 100.f));
+}
+
+void ADraftDeskGenerator::AddColumn(float X, float Y, float Height, float Diameter)
+{
+	if (Columns)
+	{
+		Columns->AddInstance(FTransform(FRotator::ZeroRotator,
+			FVector(X, Y, Height * 0.5f),
+			FVector(Diameter / 100.f, Diameter / 100.f, Height / 100.f)));
+	}
 }
 
 void ADraftDeskGenerator::AddXWallWithDoor(float X, float YMin, float YMax, float Height, float DoorWidth, float DoorHeight)
@@ -90,13 +108,11 @@ void ADraftDeskGenerator::AddXWallWithDoor(float X, float YMin, float YMax, floa
 	{
 		AddBox(FVector(X, (YMin + (-HalfDoor)) * 0.5f, Height * 0.5f), FVector(Th, LeftLen, Height));
 	}
-
 	const float RightLen = YMax - HalfDoor;
 	if (RightLen > 1.f)
 	{
 		AddBox(FVector(X, (HalfDoor + YMax) * 0.5f, Height * 0.5f), FVector(Th, RightLen, Height));
 	}
-
 	const float LintelH = Height - DoorHeight;
 	if (LintelH > 1.f)
 	{
@@ -104,15 +120,19 @@ void ADraftDeskGenerator::AddXWallWithDoor(float X, float YMin, float YMax, floa
 	}
 }
 
+void ADraftDeskGenerator::AddDoorFrame(float X, float DoorWidth, float DoorHeight)
+{
+	const float PostY = DoorWidth * 0.5f + 25.f;
+	const float Depth = WallThickness + 40.f;
+	AddBox(FVector(X, -PostY, (DoorHeight + 20.f) * 0.5f), FVector(Depth, 50.f, DoorHeight + 20.f));
+	AddBox(FVector(X,  PostY, (DoorHeight + 20.f) * 0.5f), FVector(Depth, 50.f, DoorHeight + 20.f));
+	AddBox(FVector(X, 0.f, DoorHeight + 25.f), FVector(Depth, DoorWidth + 100.f, 50.f));
+}
+
 void ADraftDeskGenerator::Rebuild()
 {
-	if (!Blocks)
-	{
-		return;
-	}
-
-	Blocks->ClearInstances();
-	Blocks->SetMaterial(0, GridMaterial);
+	if (Blocks)  { Blocks->ClearInstances();  Blocks->SetMaterial(0, GridMaterial); }
+	if (Columns) { Columns->ClearInstances(); Columns->SetMaterial(0, GridMaterial); }
 
 	if (!Spec)
 	{
@@ -120,22 +140,57 @@ void ADraftDeskGenerator::Rebuild()
 	}
 
 	const FDraftDeskMetrics& M = Spec->Metrics;
-	const float Th = WallThickness;
-	const float RX = RoomDepth;
-	const float RY = RoomWidth;
-	const float HalfY = RY * 0.5f;
-	const float H = FMath::Max(M.CeilingMin, M.DoorHeight + 60.f);
+	const float T  = WallThickness;
+	const float DW = M.DoorWidth;
+	const float DH = M.DoorHeight;
+	const float CW = M.CorridorWidth;
+	const float H1 = FMath::Max(M.CeilingMin, DH + 60.f);
+	const float H3 = FMath::Max(MainRoomHeight, DH + 60.f);
 
-	// Floor (top face at Z=0). Room extends +X from the actor origin (the entry threshold).
-	AddBox(FVector(RX * 0.5f, 0.f, -Th * 0.5f), FVector(RX + 2.f * Th, RY + 2.f * Th, Th));
+	const float AD = EntryRoomDepth, AW = EntryRoomWidth, AH = AW * 0.5f;
+	const float HL = HallLength,     CH = CW * 0.5f;
+	const float CD = MainRoomDepth,  CWd = MainRoomWidth, CH2 = CWd * 0.5f;
 
-	// Entry wall (-X) with a metric door opening.
-	AddXWallWithDoor(-Th * 0.5f, -(HalfY + Th), (HalfY + Th), H, M.DoorWidth, M.DoorHeight);
+	const float Ax0 = 0.f,   Ax1 = AD;
+	const float Hx0 = Ax1,   Hx1 = Ax1 + HL;
+	const float Cx0 = Hx1,   Cx1 = Hx1 + CD;
 
-	// Far wall (+X), solid.
-	AddBox(FVector(RX + Th * 0.5f, 0.f, H * 0.5f), FVector(Th, RY + 2.f * Th, H));
+	// ---- ENTRY ROOM (A) ----  origin (0,0,0) = entry threshold (R1)
+	AddBox(FVector((Ax0 + Ax1) * 0.5f, 0.f, -T * 0.5f), FVector(AD + 2.f * T, AW + 2.f * T, T)); // floor
+	AddXWallWithDoor(Ax0 - T * 0.5f, -(AH + T), AH + T, H1, DW, DH); // entry wall (-X)
+	AddDoorFrame(Ax0 - T * 0.5f, DW, DH);
+	AddXWallWithDoor(Ax1 + T * 0.5f, -(AH + T), AH + T, H1, DW, DH); // wall to hall (+X)
+	AddDoorFrame(Ax1 + T * 0.5f, DW, DH);
+	AddBox(FVector((Ax0 + Ax1) * 0.5f,  (AH + T * 0.5f), H1 * 0.5f), FVector(AD + 2.f * T, T, H1)); // +Y side
+	AddBox(FVector((Ax0 + Ax1) * 0.5f, -(AH + T * 0.5f), H1 * 0.5f), FVector(AD + 2.f * T, T, H1)); // -Y side
 
-	// Side walls (+/-Y), solid, overlapping the corners.
-	AddBox(FVector(RX * 0.5f,  (HalfY + Th * 0.5f), H * 0.5f), FVector(RX + 2.f * Th, Th, H));
-	AddBox(FVector(RX * 0.5f, -(HalfY + Th * 0.5f), H * 0.5f), FVector(RX + 2.f * Th, Th, H));
+	// ---- HALL ----
+	AddBox(FVector((Hx0 + Hx1) * 0.5f, 0.f, -T * 0.5f), FVector(HL, CW + 2.f * T, T)); // floor
+	AddBox(FVector((Hx0 + Hx1) * 0.5f,  (CH + T * 0.5f), H1 * 0.5f), FVector(HL, T, H1)); // +Y wall
+	AddBox(FVector((Hx0 + Hx1) * 0.5f, -(CH + T * 0.5f), H1 * 0.5f), FVector(HL, T, H1)); // -Y wall
+
+	// ---- MAIN ROOM (C) ----
+	AddBox(FVector((Cx0 + Cx1) * 0.5f, 0.f, -T * 0.5f), FVector(CD + 2.f * T, CWd + 2.f * T, T)); // floor
+	AddXWallWithDoor(Cx0 - T * 0.5f, -(CH2 + T), CH2 + T, H3, DW, DH); // entry from hall (-X)
+	AddDoorFrame(Cx0 - T * 0.5f, DW, DH);
+	AddBox(FVector(Cx1 + T * 0.5f, 0.f, H3 * 0.5f), FVector(T, CWd + 2.f * T, H3)); // back wall (+X)
+	AddBox(FVector((Cx0 + Cx1) * 0.5f,  (CH2 + T * 0.5f), H3 * 0.5f), FVector(CD + 2.f * T, T, H3)); // +Y side
+	AddBox(FVector((Cx0 + Cx1) * 0.5f, -(CH2 + T * 0.5f), H3 * 0.5f), FVector(CD + 2.f * T, T, H3)); // -Y side
+
+	if (bColumns)
+	{
+		const float Cols[3] = { Cx0 + CD * 0.28f, Cx0 + CD * 0.5f, Cx0 + CD * 0.72f };
+		const float Rows[2] = { -CWd * 0.3f, CWd * 0.3f };
+		for (float cx : Cols)
+		{
+			for (float cy : Rows)
+			{
+				AddColumn(cx, cy, H3, ColumnDiameter);
+			}
+		}
+	}
+
+	// raised dais near the back of the main room
+	const float DaisH = 80.f;
+	AddBox(FVector(Cx0 + CD * 0.78f, 0.f, DaisH * 0.5f), FVector(CWd * 0.4f, CWd * 0.4f, DaisH));
 }
