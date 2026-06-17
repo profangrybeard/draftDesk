@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1",
+  "units": "cm",
+  "note": "Default LD metrics. Override per game. Canonical source of truth for MCP blockouts; mirrored to the in-engine 'LD_Metrics' AgentSkill so it can be prompted from the editor.",
+  "metrics": {
+    "player": {
+      "capsule_half_height": 90,
+      "capsule_radius": 34,
+      "eye_height": 160,
+      "walk_speed": 600
+    },
+    "door": {
+      "width": 120,
+      "height": 220
+    },
+    "corridor": {
+      "min_width": 200,
+      "comfortable_width": 260
+    },
+    "ceiling": {
+      "min_height": 300,
+      "comfortable_height": 360
+    },
+    "step": {
+      "rise": 18,
+      "run": 30,
+      "max_traversal_angle_deg": 40
+    },
+    "ramp": {
+      "max_walkable_angle_deg": 38
+    },
+    "low_wall": {
+      "half_wall_split_height": 100
+    },
+    "vault": {
+      "height": 110,
+      "window_clear_height": 130,
+      "comment": "Window/ledge metric: sill (vault height) the player can clear, plus the clear opening height to pass through."
+    },
+    "mantle": {
+      "max_height": 150
+    },
+    "jump": {
+      "up_height": 120,
+      "gap_distance": 350
+    },
+    "grapple": {
+      "max_height": 1500,
+      "max_distance": 3000
+    }
+  }
+}

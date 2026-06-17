@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "draftDesk",
+	"Description": "Metrics-driven greybox blockout. Define player-movement metrics in the Details panel; generate test space to spec, live.",
+	"Category": "Level Design",
+	"CreatedBy": "rindsey",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "DraftDesk",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

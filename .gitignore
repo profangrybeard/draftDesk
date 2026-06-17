@@ -1,0 +1,14 @@
+# Unreal plugin build artifacts
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# IDE / OS
+.vs/
+*.sln
+*.suo
+*.user
+.vscode/
+.DS_Store
+Thumbs.db
