@@ -74,4 +74,17 @@ struct FDraftDeskMetrics
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Player", meta = (ClampMin = "10", Units = "cm"))
 	float PlayerEyeHeight = 160.f;
+
+	// --- Locomotion (drives the CharacterMovementComponent via the GameMode) ---
+	/** Slow / "walk" ground speed, cm/s. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion", meta = (ClampMin = "0"))
+	float WalkSpeed = 300.f;
+
+	/** Default / "run" ground speed, cm/s. Becomes MaxWalkSpeed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion", meta = (ClampMin = "0"))
+	float RunSpeed = 600.f;
+
+	/** Jump launch velocity, cm/s. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion", meta = (ClampMin = "0"))
+	float JumpZVelocity = 420.f;
 };

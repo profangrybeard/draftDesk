@@ -2,18 +2,18 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "DraftDeskMetrics.h"
 #include "DraftDeskGenerator.generated.h"
 
 class UInstancedStaticMeshComponent;
 class UMaterialInterface;
+class UDraftDeskSpec;
 
 /**
  * draftDesk blockout generator.
  *
- * Drop in a level, edit Metrics in the Details panel, and the greybox rebuilds in place
- * on every property change (OnConstruction). The actor's origin is the entry threshold
- * (R1: the player enters at the origin); the room extends along +X.
+ * Driven by a shared UDraftDeskSpec data asset (the single source of truth). Editing the
+ * spec rebuilds the greybox in place (live-refresh listener). The actor's origin is the
+ * entry threshold (R1); the room extends along +X.
  */
 UCLASS()
 class DRAFTDESK_API ADraftDeskGenerator : public AActor
@@ -23,9 +23,9 @@ class DRAFTDESK_API ADraftDeskGenerator : public AActor
 public:
 	ADraftDeskGenerator();
 
-	/** Player-movement metrics that drive the layout. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (ShowOnlyInnerProperties))
-	FDraftDeskMetrics Metrics;
+	/** Single source of truth. Edit this asset's metrics and the blockout rebuilds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	TObjectPtr<UDraftDeskSpec> Spec;
 
 	/** Interior depth of the room (along +X), cm. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "100", Units = "cm"))
@@ -39,11 +39,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "5", Units = "cm"))
 	float WallThickness = 30.f;
 
-	/** Grid material applied to all blocking meshes. Use a world-aligned grid so scale stays true. */
+	/** Grid material applied to all blocking meshes (world-aligned). Defaults to the plugin grid. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Material")
 	TObjectPtr<UMaterialInterface> GridMaterial;
 
 	virtual void OnConstruction(const FTransform& Transform) override;
+
+#if WITH_EDITOR
+	virtual void PostRegisterAllComponents() override;
+	virtual void BeginDestroy() override;
+#endif
 
 protected:
 	/** All greybox boxes are instances of one cube mesh, cleared and rebuilt each pass. */
@@ -52,10 +57,11 @@ protected:
 
 private:
 	void Rebuild();
-
-	/** Add an axis-aligned box (center + full size, cm) as a cube instance. */
 	void AddBox(const FVector& Center, const FVector& Size);
+	void AddXWallWithDoor(float X, float YMin, float YMax, float Height, float DoorWidth, float DoorHeight);
 
-	/** Wall on a plane of constant X, spanning [YMin,YMax], with a centered metric door opening. */
-	void AddXWallWithDoor(float X, float YMin, float YMax, float Height);
+#if WITH_EDITOR
+	void HandleObjectPropertyChanged(UObject* Object, struct FPropertyChangedEvent& PropertyChangedEvent);
+	FDelegateHandle PropertyChangedHandle;
+#endif
 };
