@@ -11,9 +11,10 @@ class UDraftDeskSpec;
 /**
  * draftDesk blockout generator.
  *
- * Driven by a shared UDraftDeskSpec data asset (the single source of truth). Editing the
- * spec rebuilds the greybox in place (live-refresh listener). The actor's origin is the
- * entry threshold (R1); the room extends along +X.
+ * Builds a room -> hall -> room greybox driven by a shared UDraftDeskSpec (the single
+ * source of truth: door / corridor / ceiling metrics). Editing the spec rebuilds in place.
+ * The actor origin is the entry threshold (R1); the space extends along +X. Geometry has
+ * collision so it is walkable in PIE.
  */
 UCLASS()
 class DRAFTDESK_API ADraftDeskGenerator : public AActor
@@ -27,17 +28,29 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	TObjectPtr<UDraftDeskSpec> Spec;
 
-	/** Interior depth of the room (along +X), cm. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "100", Units = "cm"))
-	float RoomDepth = 600.f;
+	// --- Layout (level-design choices; metrics come from the Spec) ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "200", Units = "cm"))
+	float EntryRoomDepth = 600.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "200", Units = "cm"))
+	float EntryRoomWidth = 600.f;
 
-	/** Interior width of the room (along Y), cm. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "100", Units = "cm"))
-	float RoomWidth = 600.f;
+	float HallLength = 1000.f;
 
-	/** Wall / floor thickness, cm. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "200", Units = "cm"))
+	float MainRoomDepth = 1200.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "200", Units = "cm"))
+	float MainRoomWidth = 1200.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "100", Units = "cm"))
+	float MainRoomHeight = 600.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "5", Units = "cm"))
 	float WallThickness = 30.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout")
+	bool bColumns = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "20", Units = "cm"))
+	float ColumnDiameter = 90.f;
 
 	/** Grid material applied to all blocking meshes (world-aligned). Defaults to the plugin grid. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Material")
@@ -51,14 +64,22 @@ public:
 #endif
 
 protected:
-	/** All greybox boxes are instances of one cube mesh, cleared and rebuilt each pass. */
+	/** Boxes (walls/floors/frames/dais) — instances of one cube mesh. */
 	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
 	TObjectPtr<UInstancedStaticMeshComponent> Blocks;
 
+	/** Columns — instances of one cylinder mesh. */
+	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
+	TObjectPtr<UInstancedStaticMeshComponent> Columns;
+
 private:
 	void Rebuild();
+
 	void AddBox(const FVector& Center, const FVector& Size);
+	void AddColumn(float X, float Y, float Height, float Diameter);
+	/** Wall on a plane of constant X spanning [YMin,YMax] with a centered metric door + frame. */
 	void AddXWallWithDoor(float X, float YMin, float YMax, float Height, float DoorWidth, float DoorHeight);
+	void AddDoorFrame(float X, float DoorWidth, float DoorHeight);
 
 #if WITH_EDITOR
 	void HandleObjectPropertyChanged(UObject* Object, struct FPropertyChangedEvent& PropertyChangedEvent);
