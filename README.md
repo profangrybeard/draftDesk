@@ -19,7 +19,11 @@ Define your game's **player-movement metrics** (door size, step rise/run, ceilin
 2. **Blockout.** Drop an `ADraftDeskGenerator` into the level and point its `Spec` at that asset. It builds a room→hall→room greybox (world-aligned grid by default) and **rebuilds live** when you edit the spec.
 3. **Game feel.** Make a `GameMode` that consumes the same spec — either subclass `ADraftDeskGameMode` or, in your own GameMode, hold a `Spec` and call `UDraftDeskStatics::ApplyLocomotion(Pawn, Spec)` on spawn. It pushes `RunSpeed → MaxWalkSpeed` etc. onto the pawn's `CharacterMovementComponent`.
 
-> **Important — set a real pawn.** `ADraftDeskGameMode` applies the spec but does **not** pick your character (the plugin can't know it). In your GameMode, set **`DefaultPawnClass` to your playable character** (one with input + a camera). A bare `ACharacter` has a movement component but no input, so it spawns and just stands there.
+> **Important — match your project's playable setup.** `ADraftDeskGameMode` only applies the spec; it does **not** know your character, controller, or HUD. A playable pawn needs its matching `PlayerControllerClass` too — that's usually where input (Enhanced Input mapping contexts) is wired. A character with the wrong controller spawns and just stands there.
+>
+> Two clean options:
+> - **Subclass `ADraftDeskGameMode`** and set `DefaultPawnClass`, `PlayerControllerClass`, and `HUDClass` to match your project's default GameMode (copy them from it).
+> - **Or keep your existing GameMode** (which already has all that wired) and just hold a `Spec` + call `UDraftDeskStatics::ApplyLocomotion(NewPlayer->GetPawn(), Spec)` on `RestartPlayer`. Often the lower-friction path.
 
 ## Layout
 - `Source/DraftDesk/` — C++ module
