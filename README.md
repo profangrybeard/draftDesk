@@ -16,7 +16,11 @@ Define your game's **player-movement metrics** (door size, step rise/run, ceilin
 
 ## Use
 1. **Author the spec.** Create a `UDraftDeskSpec` Data Asset and set your metrics — this is the single source of truth.
-2. **Blockout.** Drop an `ADraftDeskGenerator` into the level and point its `Spec` at that asset. It builds a room→hall→room greybox (world-aligned grid by default) and **rebuilds live** when you edit the spec.
+2. **Blockout.** Drop an `ADraftDeskGenerator` into the level and point its `Spec` at that asset. Pick a **Preset** from the `draftDesk|Layout` dropdown — the greybox (world-aligned grid by default) builds instantly and **rebuilds live** when you edit the spec or the layout:
+   - **2D layouts:** Single Room, Corridor, Room-Hall-Room, L-Bend, T-Junction, Cross (4-way), 2×2 Room Grid.
+   - **Verticality:** Split Level and Tower — metric-correct stair flights (built from `StepRise`/`StepRun` within `MaxStepTraversalAngle`) bridge rooms at different floor heights. `CellSize`, `HallLength`, and `FloorDelta` resize everything live.
+
+   The actor origin is the entry threshold (R1), so a `PlayerStart` at the generator's location spawns you in the doorway of any preset.
 3. **Game feel.** Make a `GameMode` that consumes the same spec — either subclass `ADraftDeskGameMode` or, in your own GameMode, hold a `Spec` and call `UDraftDeskStatics::ApplyLocomotion(Pawn, Spec)` on spawn. It pushes `RunSpeed → MaxWalkSpeed` etc. onto the pawn's `CharacterMovementComponent`.
 
 > **Important — match your project's playable setup.** `ADraftDeskGameMode` only applies the spec; it does **not** know your character, controller, or HUD. A playable pawn needs its matching `PlayerControllerClass` too — that's usually where input (Enhanced Input mapping contexts) is wired. A character with the wrong controller spawns and just stands there.
@@ -33,7 +37,9 @@ Define your game's **player-movement metrics** (door size, step rise/run, ceilin
 - `Docs/` — construction rules + metric defaults
 
 ## Roadmap
-- Full room→hall→room layouts and columns/door-frames from metrics
+- Expose the room/link graph as authored arrays (hand-built layouts, not just presets)
+- Mezzanine / balcony preset with `RailEdgeMask` guard rails; ramp preset
+- Door frames and stair flanking walls (cosmetic polish on openings)
 - `ULDMetricsDataAsset` presets (save/load a game's numbers)
 - Details-panel customization (grouped, with derived read-outs)
-- PlayerStart placed at the generator origin (R1)
+- Auto-place a `PlayerStart` per space at its entry threshold (R2)
