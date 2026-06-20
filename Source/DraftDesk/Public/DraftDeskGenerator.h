@@ -140,6 +140,16 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
 	TObjectPtr<UInstancedStaticMeshComponent> Columns;
 
+	/** Threshold markers — one per Link, a visible anchor at every connection. No collision; a
+	 *  marker is emitted from the link's resolved location independently of whether the opening
+	 *  carves, and a taller marker flags a threshold that failed to resolve (a "missing door"). */
+	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
+	TObjectPtr<UInstancedStaticMeshComponent> Thresholds;
+
+	/** Show the threshold markers (off => the markers component is hidden). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout")
+	bool bShowThresholds = true;
+
 private:
 	// --- transient build buffers (not reflected) ---
 	TArray<FDraftDeskRoom> Rooms;
@@ -177,14 +187,22 @@ private:
 	void EmitStairFlight(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M);
 	void EmitRamp(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M);
 	void EmitColumns(const FDraftDeskRoom& R, const FDraftDeskMetrics& M);
+	/** Emit a marker per Link: at its resolved threshold, or a tall "broken" marker if it can't resolve. */
+	void EmitThresholds(const FDraftDeskMetrics& M);
 
 	/** Resolve the (axis, plane, sharedLo, sharedHi) a link sits on. Returns false if the rooms do not abut. */
 	bool ResolveLinkEdge(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
 		uint8& OutAxis, float& OutPlane, float& OutSharedLo, float& OutSharedHi) const;
 
+	/** Tolerantly find how two rooms face each other: the axis, BOTH facing wall planes, and the
+	 *  overlap interval. Works across a gap or unequal widths — the basis of a guaranteed connection. */
+	bool FaceConnection(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
+		uint8& OutAxis, float& OutPlaneA, float& OutPlaneB, float& OutLo, float& OutHi) const;
+
 	// --- low-level primitives ---
 	void AddBox(const FVector& Center, const FVector& Size);
 	void AddRotatedBox(const FVector& Center, const FVector& Size, const FRotator& Rotation);
+	void AddMarker(const FVector& Center, const FVector& Size);
 	void AddColumn(float X, float Y, float BaseZ, float Height, float Diameter);
 
 #if WITH_EDITOR
