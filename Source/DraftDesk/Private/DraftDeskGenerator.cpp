@@ -45,16 +45,10 @@ ADraftDeskGenerator::ADraftDeskGenerator()
 	Columns->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	Columns->SetCollisionProfileName(TEXT("BlockAll"));
 
-	Thresholds = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("Thresholds"));
-	Thresholds->SetupAttachment(Blocks);
-	Thresholds->SetMobility(EComponentMobility::Movable);
-	Thresholds->SetCollisionEnabled(ECollisionEnabled::NoCollision); // markers are visual only
-
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
 	{
 		Blocks->SetStaticMesh(CubeMesh.Object);
-		Thresholds->SetStaticMesh(CubeMesh.Object); // default cube material reads distinct from the grid
 	}
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	if (CylMesh.Succeeded())
@@ -123,15 +117,6 @@ void ADraftDeskGenerator::AddRotatedBox(const FVector& Center, const FVector& Si
 		return;
 	}
 	Blocks->AddInstance(FTransform(Rotation, Center, Size / 100.f));
-}
-
-void ADraftDeskGenerator::AddMarker(const FVector& Center, const FVector& Size)
-{
-	if (!Thresholds || Size.X < 1.f || Size.Y < 1.f || Size.Z < 1.f)
-	{
-		return;
-	}
-	Thresholds->AddInstance(FTransform(FRotator::ZeroRotator, Center, Size / 100.f));
 }
 
 void ADraftDeskGenerator::AddColumn(float X, float Y, float BaseZ, float Height, float Diameter)
@@ -763,13 +748,31 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 		}
 		if (!bResolved)
 		{
-			continue; // the threshold pass flags this loudly as a broken marker
+			// Loud failure (folds in the old EmitThresholds broken-marker warning): a declared link
+			// that can't resolve to a wall is a "missing door" — warn so it is never a silent seal.
+			UE_LOG(LogTemp, Warning,
+				TEXT("draftDesk: unresolved link (RoomA=%d RoomB=%d kind=%d) — opening not carved."),
+				L.RoomA, L.RoomB, static_cast<int32>(L.Kind));
+			continue;
 		}
 
 		const bool bWindow = (L.Kind == EDraftDeskLinkKind::Window);
 		const float W = L.Width > 0.f ? L.Width
 			: (L.Kind == EDraftDeskLinkKind::Doorway || bWindow ? M.DoorWidth : M.CorridorWidth);
-		const float Center0 = (SLo + SHi) * 0.5f + L.Position;
+
+		// Keep the opening inside the shared facing span [SLo,SHi] (where the two rooms actually meet)
+		// so it can never be wider than the shared wall, slide off it, or open where the neighbour
+		// isn't — for ANY authored Position, from any source. Computed ONCE so both walls carve the
+		// SAME interval (a per-plane clamp could diverge and seal the passage). No corner-post margin
+		// is needed: each wall record already overhangs the overlap by >= WallThickness (Edge->Lo =
+		// R.Min - T and [SLo,SHi] is a subset of [R.Min,R.Max]), so an opening flush to SLo/SHi still
+		// leaves a solid pier where the perpendicular walls meet.
+		const float Span = SHi - SLo;
+		const float Weff = FMath::Min(W, Span);
+		const float Center = FMath::Clamp((SLo + SHi) * 0.5f + L.Position,
+			SLo + Weff * 0.5f, SHi - Weff * 0.5f);
+		const float OpenLo = Center - Weff * 0.5f;
+		const float OpenHi = Center + Weff * 0.5f;
 
 		auto CarveInto = [&](float Plane)
 		{
@@ -785,10 +788,9 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 			}
 			if (!Edge) { return; } // no wall on this side (open edge) -> already a passage
 
-			float Center = FMath::Clamp(Center0, Edge->Lo + WallThickness + W * 0.5f, Edge->Hi - WallThickness - W * 0.5f);
 			FDraftDeskOpening O;
-			O.Lo = Center - W * 0.5f;
-			O.Hi = Center + W * 0.5f;
+			O.Lo = OpenLo;
+			O.Hi = OpenHi;
 			if (bWindow && !Edge->bRail)
 			{
 				O.SillZ = L.Sill > 0.f ? L.Sill : M.HalfWallHeight;
@@ -962,92 +964,12 @@ void ADraftDeskGenerator::EmitColumns(const FDraftDeskRoom& R, const FDraftDeskM
 	}
 }
 
-void ADraftDeskGenerator::EmitThresholds(const FDraftDeskMetrics& M)
-{
-	// One marker per Link, computed from the link's resolved location — NOT from the wall-carve.
-	// So a marker appears even if the opening fails to carve, and a link that can't resolve at all
-	// gets a taller "broken" marker plus a warning, instead of silently becoming a sealed wall.
-	const float Post = 24.f;
-	const float MarkH = 1100.f;   // poke above the walls so every connection reads at a glance
-	const float BrokenH = 1500.f;
-
-	for (const FDraftDeskLink& L : Links)
-	{
-		float Cx = 0.f, Cy = 0.f, BaseZ = 0.f;
-		bool bResolved = false;
-
-		if (L.Kind == EDraftDeskLinkKind::Stairs || L.Kind == EDraftDeskLinkKind::Ramp)
-		{
-			if (L.RoomA >= 0 && L.RoomA < Rooms.Num() && L.RoomB >= 0 && L.RoomB < Rooms.Num())
-			{
-				const FDraftDeskRoom& A = Rooms[L.RoomA];
-				const FDraftDeskRoom& B = Rooms[L.RoomB];
-				Cx = (A.CX() + B.CX()) * 0.5f;
-				Cy = (A.CY() + B.CY()) * 0.5f;
-				BaseZ = FMath::Min(A.FloorZ, B.FloorZ);
-				bResolved = true;
-			}
-		}
-		else
-		{
-			uint8 Axis = 0;
-			float PlaneA = 0.f, PlaneB = 0.f, SLo = 0.f, SHi = 0.f;
-			bool bOk = false;
-			if (L.RoomB == INDEX_NONE)
-			{
-				if (ResolveLinkEdge(L, M, Axis, PlaneA, SLo, SHi)) { PlaneB = PlaneA; bOk = true; }
-			}
-			else
-			{
-				bOk = FaceConnection(L, M, Axis, PlaneA, PlaneB, SLo, SHi);
-			}
-			if (bOk)
-			{
-				const float Along = (SLo + SHi) * 0.5f + L.Position;
-				const float Plane = (PlaneA + PlaneB) * 0.5f;
-				if (Axis == 0) { Cx = Plane; Cy = Along; }
-				else { Cx = Along; Cy = Plane; }
-				BaseZ = (L.RoomA >= 0 && L.RoomA < Rooms.Num()) ? Rooms[L.RoomA].FloorZ : 0.f;
-				if (L.RoomB >= 0 && L.RoomB < Rooms.Num())
-				{
-					BaseZ = FMath::Min(BaseZ, Rooms[L.RoomB].FloorZ);
-				}
-				bResolved = true;
-			}
-		}
-
-		if (bResolved)
-		{
-			AddMarker(FVector(Cx, Cy, BaseZ + MarkH * 0.5f), FVector(Post, Post, MarkH));
-		}
-		else
-		{
-			float Mx = 0.f, My = 0.f, Bz = 0.f;
-			if (L.RoomA >= 0 && L.RoomA < Rooms.Num())
-			{
-				const FDraftDeskRoom& A = Rooms[L.RoomA];
-				Mx = A.CX(); My = A.CY(); Bz = A.FloorZ;
-				if (L.RoomB >= 0 && L.RoomB < Rooms.Num())
-				{
-					const FDraftDeskRoom& B = Rooms[L.RoomB];
-					Mx = (Mx + B.CX()) * 0.5f; My = (My + B.CY()) * 0.5f; Bz = FMath::Min(Bz, B.FloorZ);
-				}
-			}
-			AddMarker(FVector(Mx, My, Bz + BrokenH * 0.5f), FVector(Post * 2.f, Post * 2.f, BrokenH));
-			UE_LOG(LogTemp, Warning,
-				TEXT("draftDesk: unresolved threshold (link RoomA=%d RoomB=%d kind=%d) — marked broken, opening not carved."),
-				L.RoomA, L.RoomB, static_cast<int32>(L.Kind));
-		}
-	}
-}
-
 // ---- orchestrator --------------------------------------------------------
 
 void ADraftDeskGenerator::Rebuild()
 {
 	if (Blocks)  { Blocks->ClearInstances();  Blocks->SetMaterial(0, GridMaterial); }
 	if (Columns) { Columns->ClearInstances(); Columns->SetMaterial(0, GridMaterial); }
-	if (Thresholds) { Thresholds->ClearInstances(); Thresholds->SetVisibility(bShowThresholds); }
 
 	Rooms.Reset();
 	Links.Reset();
@@ -1095,6 +1017,4 @@ void ADraftDeskGenerator::Rebuild()
 	{
 		AddBox(B.Center, B.Size);
 	}
-
-	EmitThresholds(M); // resilient pass: mark every connection, flag the ones that didn't resolve
 }
