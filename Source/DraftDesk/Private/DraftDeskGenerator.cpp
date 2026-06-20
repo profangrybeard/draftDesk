@@ -735,6 +735,11 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 			O.Height = L.Height > 0.f ? L.Height : M.DoorHeight;
 			O.bFullClear = (L.Kind != EDraftDeskLinkKind::Doorway); // Open / window-on-rail / stair mouths are full-clear
 		}
+		if (!O.bFullClear) // keep a lintel so the opening never cuts through the wall top
+		{
+			O.Height = FMath::Min(O.Height, Edge->WallH - 40.f);
+			O.Height = FMath::Max(O.Height, O.SillZ + 40.f);
+		}
 		Edge->Openings.Add(O);
 	}
 }
@@ -755,6 +760,23 @@ void ADraftDeskGenerator::EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskM
 			? FVector(E.Plane, (ULo + UHi) * 0.5f, (ZLo + ZHi) * 0.5f)
 			: FVector((ULo + UHi) * 0.5f, E.Plane, (ZLo + ZHi) * 0.5f);
 		const FVector S = (E.Axis == 0) ? FVector(T, Len, H) : FVector(Len, T, H);
+		AddBox(C, S);
+	};
+
+	// A proud frame box (thicker than the wall) for door / window jambs + header.
+	auto Frame = [&](float ULo, float UHi, float ZLo, float ZHi)
+	{
+		const float Len = UHi - ULo;
+		const float H = ZHi - ZLo;
+		if (Len <= 1.f || H <= 1.f)
+		{
+			return;
+		}
+		const float Depth = T + 24.f;
+		const FVector C = (E.Axis == 0)
+			? FVector(E.Plane, (ULo + UHi) * 0.5f, (ZLo + ZHi) * 0.5f)
+			: FVector((ULo + UHi) * 0.5f, E.Plane, (ZLo + ZHi) * 0.5f);
+		const FVector S = (E.Axis == 0) ? FVector(Depth, Len, H) : FVector(Len, Depth, H);
 		AddBox(C, S);
 	};
 
@@ -794,6 +816,13 @@ void ADraftDeskGenerator::EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskM
 		if (!E.bRail && !O.bFullClear)
 		{
 			Solid(OL, OR, E.BaseZ + O.Height, Top); // lintel above a doorway / window
+			// frame it: jambs straddling the opening edges + a header beam, proud of the wall
+			const float DT = E.BaseZ + O.Height;   // head height
+			const float JB = E.BaseZ + O.SillZ;    // foot (sill for a window, floor for a door)
+			const float JW = 18.f, HH = 18.f;
+			Frame(OL - JW * 0.5f, OL + JW * 0.5f, JB, DT + HH);
+			Frame(OR - JW * 0.5f, OR + JW * 0.5f, JB, DT + HH);
+			Frame(OL - JW * 0.5f, OR + JW * 0.5f, DT, DT + HH);
 		}
 		Cursor = FMath::Max(Cursor, OR);
 	}
