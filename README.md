@@ -6,6 +6,16 @@ Define your game's **player-movement metrics** (door size, step rise/run, ceilin
 
 > LLM/MCP-enabled: built and extended through Claude driving the in-editor MCP server, but the runtime tool is plain UE C++ — no AI required to use it.
 
+## Documentation
+Everything needed to rebuild and operate the kit on a fresh machine lives in this repo:
+- **[Docs/SETUP.md](Docs/SETUP.md)** — fresh-machine setup from zero (UE, host project, MCP server, assets).
+- **[Docs/GOALS.md](Docs/GOALS.md)** — the vision, threshold-first philosophy, and roadmap.
+- **[Docs/RULES.md](Docs/RULES.md)** — the invariants (LD rules R1–R4, engine/data-model, MCP/authoring).
+- **[Docs/RESISTANCE.md](Docs/RESISTANCE.md)** — the gotchas/failure-modes as symptom → cause → fix.
+- **[Docs/WORKFLOW.md](Docs/WORKFLOW.md)** — operate it end to end (build cycle + authoring loop).
+- **[Tools/](Tools/README.md)** — the Python authoring harness (drives the generator over MCP).
+- `Docs/LD_RULES.md`, `Docs/LD_Metrics.json` — the construction rules + metric schema.
+
 ## Install
 1. Clone into your project's `Plugins/` folder (or the engine's `Plugins/` to share across all projects):
    ```
@@ -29,17 +39,34 @@ Define your game's **player-movement metrics** (door size, step rise/run, ceilin
 > - **Subclass `ADraftDeskGameMode`** and set `DefaultPawnClass`, `PlayerControllerClass`, and `HUDClass` to match your project's default GameMode (copy them from it).
 > - **Or keep your existing GameMode** (which already has all that wired) and just hold a `Spec` + call `UDraftDeskStatics::ApplyLocomotion(NewPlayer->GetPawn(), Spec)` on `RestartPlayer`. Often the lower-friction path.
 
+## Author by threshold (the graph + markers)
+Beyond presets, draftDesk is a **rooms-and-links graph** you author directly, the
+[threshold-first way](Docs/GOALS.md): plan the connections, fill the spaces.
+- **`Custom` preset** builds from four authored arrays (rooms / links / stairs / boxes). The
+  [`Tools/`](Tools/README.md) harness composes these from a dictated layout.
+- **Movable threshold markers** (`ADraftDeskThreshold`) are the authoring surface: seed one per
+  connection, **drag** them to where the player should pass, then **sync** — the geometry rebuilds
+  around them (slide / resize / merge-on-delete). A declared connection can never resolve to a solid
+  wall, and an opening can never slide off its wall (engine-clamped, any source).
+
 ## Layout
 - `Source/DraftDesk/` — C++ module
   - `DraftDeskMetrics.h` — `FDraftDeskMetrics` (the schema)
-  - `DraftDeskGenerator.h/.cpp` — `ADraftDeskGenerator` (build-on-edit actor)
+  - `DraftDeskGenerator.h/.cpp` — `ADraftDeskGenerator` (build-on-edit actor; the whole pipeline)
+  - `DraftDeskThreshold.h/.cpp` — `ADraftDeskThreshold` (movable marker actor)
+  - `DraftDeskStatics.*` — `ApplyLocomotion` (push metrics onto the pawn)
 - `Content/` — plugin content (grid material, presets)
-- `Docs/` — construction rules + metric defaults
+- `Tools/` — Python authoring harness (compose → push → seed → drag → sync → screenshot)
+- `Docs/` — goals, rules, resistance, workflow, construction rules + metric defaults
 
 ## Roadmap
-- Expose the room/link graph as authored arrays (hand-built layouts, not just presets)
-- Mezzanine / balcony preset with `RailEdgeMask` guard rails; ramp preset
-- Door frames and stair flanking walls (cosmetic polish on openings)
-- `ULDMetricsDataAsset` presets (save/load a game's numbers)
-- Details-panel customization (grouped, with derived read-outs)
-- Auto-place a `PlayerStart` per space at its entry threshold (R2)
+**Done:** authored rooms/links graph (`Custom`); ramp + mezzanine presets; connection guarantee and
+durable opening clamp (engine); movable threshold markers (engine); marker→geometry sync Stage A and
+nav auto-sync (harness, in `Tools/`).
+**Next:**
+- **Stage B reshape** — a marker dragged perpendicular off its wall moves/grows the wall + room to follow it.
+- Robustness backlog: stairs markers → cross-flight offset; window Z-drag → sill; 3D-aware abutment;
+  column-in-doorway check; min-pier between two doors on one wall; idempotent delete→re-add.
+- Door frames / stair flanking walls (opening polish); save/load metric presets; details-panel grouping.
+- Auto-place a `PlayerStart` per space at its entry threshold (R2).
+- Consume the **GAME356 kit** — emit real `AInteractableDoor` actors at thresholds.
