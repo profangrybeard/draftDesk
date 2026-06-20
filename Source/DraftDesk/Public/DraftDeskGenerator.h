@@ -15,7 +15,8 @@ struct FDraftDeskOpening
 {
 	float Lo = 0.f;          // span on the wall's axis (cm)
 	float Hi = 0.f;
-	float Height = 0.f;      // clear height of the opening
+	float Height = 0.f;      // top of the clear opening above BaseZ
+	float SillZ = 0.f;       // solid below the opening up to this height (windows); 0 => none
 	bool  bFullClear = false; // true => no lintel (open arch / stair mouth)
 };
 
@@ -43,13 +44,6 @@ struct FDraftDeskStairJob
 	float Z1 = 0.f;          // upper floor Z
 	float W = 0.f;           // tread width
 	bool  bRamp = false;
-};
-
-/** A one-off solid box a preset wants emitted verbatim (e.g. the legacy dais). */
-struct FDraftDeskBox
-{
-	FVector Center = FVector::ZeroVector;
-	FVector Size = FVector::ZeroVector;
 };
 
 /**
@@ -107,6 +101,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Material")
 	TObjectPtr<UMaterialInterface> GridMaterial;
 
+	// --- Authored layout (used when Preset == Custom) ---
+	// The room-graph as editable data: dictate a layout by filling these. Indices in Links/Stairs
+	// refer to AuthoredRooms order. Exactly one Link should set bIsEntry (its threshold -> origin, R1).
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
+	TArray<FDraftDeskRoom> AuthoredRooms;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
+	TArray<FDraftDeskLink> AuthoredLinks;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
+	TArray<FDraftDeskStair> AuthoredStairs;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
+	TArray<FDraftDeskBlock> AuthoredBoxes;
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 #if WITH_EDITOR
@@ -118,6 +128,8 @@ public:
 	static int32 StepCount(float DZ, const FDraftDeskMetrics& M);
 	/** Total horizontal run of a flight that climbs DZ. Single source of truth for presets + emitter. */
 	static float TotalRun(float DZ, const FDraftDeskMetrics& M);
+	/** Horizontal run of a ramp that climbs DZ at MaxStepTraversalAngle. Shared by preset + emitter. */
+	static float RampRun(float DZ, const FDraftDeskMetrics& M);
 
 protected:
 	/** Boxes (walls/floors/stairs/dais) — instances of one cube mesh. */
@@ -133,7 +145,7 @@ private:
 	TArray<FDraftDeskRoom> Rooms;
 	TArray<FDraftDeskLink> Links;
 	TArray<FDraftDeskStairJob> StairQueue;
-	TArray<FDraftDeskBox> ExtraBoxes;
+	TArray<FDraftDeskBlock> ExtraBoxes;
 
 	void Rebuild();
 
@@ -148,6 +160,9 @@ private:
 	void BuildPreset_Grid2x2(const FDraftDeskMetrics& M);
 	void BuildPreset_SplitLevel(const FDraftDeskMetrics& M);
 	void BuildPreset_Tower(const FDraftDeskMetrics& M);
+	void BuildPreset_Ramp(const FDraftDeskMetrics& M);
+	void BuildPreset_Mezzanine(const FDraftDeskMetrics& M);
+	void BuildPreset_Custom(const FDraftDeskMetrics& M);
 
 	int32 AddRoom(float MinX, float MinY, float MaxX, float MaxY, float FloorZ = 0.f, float Height = 0.f);
 	void  AddLink(int32 A, int32 B, EDraftDeskLinkKind Kind, float Position = 0.f, float Width = 0.f, float Height = 0.f);

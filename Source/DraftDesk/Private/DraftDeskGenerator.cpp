@@ -148,6 +148,16 @@ float ADraftDeskGenerator::TotalRun(float DZ, const FDraftDeskMetrics& M)
 	return StepCount(DZ, M) * M.StepRun;
 }
 
+float ADraftDeskGenerator::RampRun(float DZ, const FDraftDeskMetrics& M)
+{
+	if (DZ <= 1.f)
+	{
+		return 0.f;
+	}
+	const float TanA = FMath::Tan(FMath::DegreesToRadians(FMath::Min(M.MaxStepTraversalAngle, 89.f)));
+	return (TanA > KINDA_SMALL_NUMBER) ? DZ / TanA : DZ;
+}
+
 // ---- graph helpers -------------------------------------------------------
 
 int32 ADraftDeskGenerator::AddRoom(float MinX, float MinY, float MaxX, float MaxY, float FloorZ, float Height)
@@ -199,6 +209,9 @@ void ADraftDeskGenerator::BuildPreset(const FDraftDeskMetrics& M)
 	case EDraftDeskPreset::Grid2x2:      BuildPreset_Grid2x2(M);      break;
 	case EDraftDeskPreset::SplitLevel:   BuildPreset_SplitLevel(M);   break;
 	case EDraftDeskPreset::Tower:        BuildPreset_Tower(M);        break;
+	case EDraftDeskPreset::Ramp:         BuildPreset_Ramp(M);         break;
+	case EDraftDeskPreset::Mezzanine:    BuildPreset_Mezzanine(M);    break;
+	case EDraftDeskPreset::Custom:       BuildPreset_Custom(M);       break;
 	default:                             BuildPreset_RoomHallRoom(M); break;
 	}
 }
@@ -224,7 +237,7 @@ void ADraftDeskGenerator::BuildPreset_RoomHallRoom(const FDraftDeskMetrics& M)
 
 	// raised dais near the back of the main room (legacy character piece)
 	const float DaisH = 80.f;
-	FDraftDeskBox Dais;
+	FDraftDeskBlock Dais;
 	Dais.Center = FVector(Cx0 + MD * 0.78f, 0.f, DaisH * 0.5f);
 	Dais.Size = FVector(MD * 0.4f, MD * 0.4f, DaisH);
 	ExtraBoxes.Add(Dais);
@@ -378,6 +391,74 @@ void ADraftDeskGenerator::BuildPreset_Tower(const FDraftDeskMetrics& M)
 	}
 }
 
+void ADraftDeskGenerator::BuildPreset_Ramp(const FDraftDeskMetrics& M)
+{
+	const float C = CellSize;
+	const float T = WallThickness;
+	const float Run = RampRun(FloorDelta, M);
+
+	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 0.f);
+	const float R2x0 = C + T + Run; // gap sized to the ramp run so the upper floor is the flush top
+	const int32 R2 = AddRoom(R2x0, -C * 0.5f, R2x0 + C, C * 0.5f, FloorDelta);
+
+	Rooms[R1].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East);
+	Rooms[R2].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West);
+
+	AddEntry(R1, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
+	AddLink(R1, R2, EDraftDeskLinkKind::Ramp);
+}
+
+void ADraftDeskGenerator::BuildPreset_Mezzanine(const FDraftDeskMetrics& M)
+{
+	const float C = CellSize;
+	const float T = WallThickness;
+	const float CW = M.CorridorWidth;
+	const float Run = TotalRun(FloorDelta, M);
+
+	// tall main room
+	const int32 Big = AddRoom(0.f, -C, 2.f * C, C, 0.f, FMath::Max(2.f * M.CeilingMin, FloorDelta + M.CeilingMin));
+
+	// balcony over the back third, raised; its West edge overlooks the room (guard rail),
+	// its E/N/S edges coincide with the big room's outer walls (no double wall).
+	const float BalX0 = 1.4f * C;
+	const int32 Bal = AddRoom(BalX0, -C, 2.f * C, C, FloorDelta);
+	Rooms[Bal].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East) | EdgeBit(EDraftDeskEdge::North) | EdgeBit(EDraftDeskEdge::South);
+	Rooms[Bal].RailEdgeMask |= EdgeBit(EDraftDeskEdge::West);
+
+	AddEntry(Big, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
+	// a centred gap in the balcony's West rail where the stair lands
+	AddEntry(Bal, EDraftDeskEdge::West, EDraftDeskLinkKind::Open, false);
+
+	// explicit stair climbing +X to the balcony front, centred on Y
+	FDraftDeskStairJob J;
+	J.bAlongX = true; J.Dir = 1;
+	J.StartU = BalX0 - Run;
+	J.CrossV = 0.f;
+	J.Z0 = 0.f; J.Z1 = FloorDelta;
+	J.W = CW;
+	StairQueue.Add(J);
+}
+
+void ADraftDeskGenerator::BuildPreset_Custom(const FDraftDeskMetrics& M)
+{
+	Rooms = AuthoredRooms;
+	Links = AuthoredLinks;
+	ExtraBoxes = AuthoredBoxes;
+	for (const FDraftDeskStair& S : AuthoredStairs)
+	{
+		FDraftDeskStairJob J;
+		J.bAlongX = S.bAlongX;
+		J.StartU = S.StartU;
+		J.Dir = (S.Dir >= 0 ? 1 : -1);
+		J.CrossV = S.CrossV;
+		J.Z0 = S.FromZ;
+		J.Z1 = S.ToZ;
+		J.W = S.Width > 0.f ? S.Width : M.CorridorWidth;
+		J.bRamp = S.bRamp;
+		StairQueue.Add(J);
+	}
+}
+
 // ---- emission ------------------------------------------------------------
 
 void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
@@ -418,9 +499,17 @@ void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
 		R.Min.Y -= Dy; R.Max.Y -= Dy;
 		R.FloorZ -= MinZ;
 	}
-	for (FDraftDeskBox& B : ExtraBoxes)
+	for (FDraftDeskBlock& B : ExtraBoxes)
 	{
 		B.Center.X -= Dx; B.Center.Y -= Dy; B.Center.Z -= MinZ;
+	}
+	// explicit stairs queued by a preset (Mezzanine / Custom) are pre-normalize; auto-stairs from
+	// links are added later in normalized space, so only translate what is already queued here.
+	for (FDraftDeskStairJob& J : StairQueue)
+	{
+		if (J.bAlongX) { J.StartU -= Dx; J.CrossV -= Dy; }
+		else { J.StartU -= Dy; J.CrossV -= Dx; }
+		J.Z0 -= MinZ; J.Z1 -= MinZ;
 	}
 }
 
@@ -433,7 +522,10 @@ void ADraftDeskGenerator::EmitFloorsAndCeilings(const FDraftDeskMetrics& M)
 		{
 			continue;
 		}
-		AddBox(FVector(R.CX(), R.CY(), R.FloorZ - T * 0.5f), FVector(R.W() + 2.f * T, R.D() + 2.f * T, T));
+		if (!R.bNoFloor)
+		{
+			AddBox(FVector(R.CX(), R.CY(), R.FloorZ - T * 0.5f), FVector(R.W() + 2.f * T, R.D() + 2.f * T, T));
+		}
 		if (R.bCeiling || bPlaceCeilings)
 		{
 			const float H = EffH(R, M);
@@ -607,9 +699,9 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 			continue; // open joint with no wall to carve
 		}
 
+		const bool bWindow = (L.Kind == EDraftDeskLinkKind::Window);
 		const float W = L.Width > 0.f ? L.Width
-			: (L.Kind == EDraftDeskLinkKind::Doorway ? M.DoorWidth : M.CorridorWidth);
-		const float Hgt = L.Height > 0.f ? L.Height : M.DoorHeight;
+			: (L.Kind == EDraftDeskLinkKind::Doorway || bWindow ? M.DoorWidth : M.CorridorWidth);
 
 		float Center = (SLo + SHi) * 0.5f + L.Position;
 		Center = FMath::Clamp(Center, Edge->Lo + WallThickness + W * 0.5f, Edge->Hi - WallThickness - W * 0.5f);
@@ -617,8 +709,18 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 		FDraftDeskOpening O;
 		O.Lo = Center - W * 0.5f;
 		O.Hi = Center + W * 0.5f;
-		O.Height = Hgt;
-		O.bFullClear = (L.Kind != EDraftDeskLinkKind::Doorway);
+		if (bWindow && !Edge->bRail) // a window on a half-height rail is incoherent -> plain gap (else branch)
+		{
+			O.SillZ = L.Sill > 0.f ? L.Sill : M.HalfWallHeight;
+			const float Clear = L.Height > 0.f ? L.Height : M.WindowClearHeight;
+			O.Height = O.SillZ + Clear; // top of the clear band; lintel sits above
+			O.bFullClear = false;       // sill below + lintel above
+		}
+		else
+		{
+			O.Height = L.Height > 0.f ? L.Height : M.DoorHeight;
+			O.bFullClear = (L.Kind != EDraftDeskLinkKind::Doorway); // Open / window-on-rail / stair mouths are full-clear
+		}
 		Edge->Openings.Add(O);
 	}
 }
@@ -656,6 +758,7 @@ void ADraftDeskGenerator::EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskM
 		{
 			Merged.Last().Hi = FMath::Max(Merged.Last().Hi, O.Hi);
 			Merged.Last().Height = FMath::Max(Merged.Last().Height, O.Height);
+			Merged.Last().SillZ = FMath::Max(Merged.Last().SillZ, O.SillZ); // keep any window's sill
 			Merged.Last().bFullClear = Merged.Last().bFullClear || O.bFullClear;
 		}
 		else
@@ -670,9 +773,13 @@ void ADraftDeskGenerator::EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskM
 		const float OL = FMath::Clamp(O.Lo, E.Lo, E.Hi);
 		const float OR = FMath::Clamp(O.Hi, E.Lo, E.Hi);
 		Solid(Cursor, OL, E.BaseZ, Top); // pier before the opening
+		if (O.SillZ > 1.f)
+		{
+			Solid(OL, OR, E.BaseZ, E.BaseZ + O.SillZ); // sill band below a window
+		}
 		if (!E.bRail && !O.bFullClear)
 		{
-			Solid(OL, OR, E.BaseZ + O.Height, Top); // lintel above a doorway
+			Solid(OL, OR, E.BaseZ + O.Height, Top); // lintel above a doorway / window
 		}
 		Cursor = FMath::Max(Cursor, OR);
 	}
@@ -761,7 +868,7 @@ void ADraftDeskGenerator::Rebuild()
 	const FDraftDeskMetrics& M = Spec->Metrics;
 
 	BuildPreset(M);
-	if (Rooms.Num() == 0)
+	if (Rooms.Num() == 0 && StairQueue.Num() == 0 && ExtraBoxes.Num() == 0)
 	{
 		return;
 	}
@@ -791,7 +898,7 @@ void ADraftDeskGenerator::Rebuild()
 		}
 	}
 
-	for (const FDraftDeskBox& B : ExtraBoxes)
+	for (const FDraftDeskBlock& B : ExtraBoxes)
 	{
 		AddBox(B.Center, B.Size);
 	}
