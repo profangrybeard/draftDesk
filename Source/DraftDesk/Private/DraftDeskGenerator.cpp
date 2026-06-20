@@ -592,6 +592,12 @@ bool ADraftDeskGenerator::ResolveLinkEdge(const FDraftDeskLink& L, const FDraftD
 {
 	const float T = WallThickness;
 	const float Eps = 1.f;
+	// Authored data can be momentarily inconsistent (the property system applies arrays one at a
+	// time, each triggering a rebuild), so never trust a link's room indices without bounds-checking.
+	if (L.RoomA < 0 || L.RoomA >= Rooms.Num())
+	{
+		return false;
+	}
 	const FDraftDeskRoom& A = Rooms[L.RoomA];
 
 	if (L.RoomB == INDEX_NONE)
@@ -607,6 +613,10 @@ bool ADraftDeskGenerator::ResolveLinkEdge(const FDraftDeskLink& L, const FDraftD
 		return true;
 	}
 
+	if (L.RoomB < 0 || L.RoomB >= Rooms.Num())
+	{
+		return false;
+	}
 	const FDraftDeskRoom& B = Rooms[L.RoomB];
 	if (FMath::Abs(A.Max.X + T - B.Min.X) < Eps) { OutAxis = 0; OutPlane = A.Max.X + T * 0.5f; }
 	else if (FMath::Abs(B.Max.X + T - A.Min.X) < Eps) { OutAxis = 0; OutPlane = B.Max.X + T * 0.5f; }
@@ -635,6 +645,10 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 		// separated by the run, so they don't abut — ResolveLinkEdge would reject them).
 		if ((L.Kind == EDraftDeskLinkKind::Stairs || L.Kind == EDraftDeskLinkKind::Ramp) && L.RoomB != INDEX_NONE)
 		{
+			if (L.RoomA < 0 || L.RoomA >= Rooms.Num() || L.RoomB < 0 || L.RoomB >= Rooms.Num())
+			{
+				continue; // skip a link with stale/out-of-range room indices (mid-edit authored data)
+			}
 			const FDraftDeskRoom& A = Rooms[L.RoomA];
 			const FDraftDeskRoom& B = Rooms[L.RoomB];
 			const FDraftDeskRoom& Lo = (A.FloorZ <= B.FloorZ) ? A : B;
