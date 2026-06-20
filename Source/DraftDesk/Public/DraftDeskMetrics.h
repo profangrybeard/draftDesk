@@ -87,4 +87,9 @@ struct FDraftDeskMetrics
 	/** Jump launch velocity, cm/s. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion", meta = (ClampMin = "0"))
 	float JumpZVelocity = 420.f;
+
+	/** First-person camera field of view, degrees. Applied to the pawn camera on spawn — tune it
+	 *  alongside RunSpeed and door size (faster movement / wider apertures usually want more FOV). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion", meta = (ClampMin = "30", ClampMax = "170", Units = "deg"))
+	float FOV = 90.f;
 };

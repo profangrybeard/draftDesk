@@ -1,6 +1,7 @@
 #include "DraftDeskStatics.h"
 
 #include "DraftDeskSpec.h"
+#include "Camera/CameraComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
@@ -28,5 +29,11 @@ bool UDraftDeskStatics::ApplyLocomotion(APawn* Pawn, const UDraftDeskSpec* Spec)
 	Movement->MaxWalkSpeed = M.RunSpeed;
 	Movement->MaxWalkSpeedCrouched = M.WalkSpeed;
 	Movement->JumpZVelocity = M.JumpZVelocity;
+
+	// Camera feel: FOV travels with the locomotion metrics it's coupled to.
+	if (UCameraComponent* Camera = Character->FindComponentByClass<UCameraComponent>())
+	{
+		Camera->SetFieldOfView(M.FOV);
+	}
 	return true;
 }
