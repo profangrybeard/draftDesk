@@ -1,107 +1,92 @@
 """
-Example layout — Castle Chorrol (Oblivion), the reference dictation that exercises the whole kit:
-- entrance approach with a guard station + attached weapons room (ground floor),
-- two mirrored side wings off the balcony (turn, a corridor with 3 rooms, a round-room stair shaft),
-- a central royal suite off the balcony: antechamber -> large bedroom + bath + closet,
-- two grand staircases bridging ground (Z=0) to the balcony/upper floor (Z=300).
+Example layout — Castle Chorrol (Oblivion), the reference dictation, re-authored on the SHELL model.
+This mirrors the proven `Tools/shell/castle_shell.py` (24 rooms, 24 thresholds, 2 levels, watertight)
+and adds the throne-room character (dais / throne / cases / throne wall) plus a stairwell up to the
+balcony for walkability.
 
-Importing this module just BUILDS the layout (use `dd_castle.L`); running it directly
-(`python dd_castle.py`) also pushes it onto the live generator via ddrun.
-Copy this file as a template for your own dictated layouts.
+- ground floor (Level 0): a tall Great Hall + an entrance approach with a guard station + weapons room.
+- upper floor (Level 1): a balcony (roofless mezzanine open to the tall hall, rail over the drop),
+  two mirrored side wings (arm -> corner -> corridor with 3 rooms -> shaft), and a royal suite
+  (chamber -> antechamber -> bedroom + bath + closet).
 
-Authored fully ON the 50cm grid: every footprint, height, and abutment gap is a whole cell (gap = T =
-one cell), so the engine's snap is a no-op and shared walls dedup cleanly. Keep new layouts on-grid.
-NOTE: 'round room' is a square placeholder — the kit is axis-aligned (no curved geometry yet).
+Importing this module BUILDS the layout (use `dd_castle.L`); running it (`python dd_castle.py`) also
+pushes it onto the live generator via ddrun. Copy as a template for your own dictated layouts.
+
+Authored fully ON the 50cm grid (gap = T = one cell), so the engine's snap is a no-op and shared walls
+dedup cleanly. 'Round room' is a square placeholder — the kit is axis-aligned (no curves yet).
+There is NO OpenEdgeMask: a corridor mouth is a Passage threshold; a balcony edge is a Rail threshold.
 """
-import math
-from dd_author import Layout, WEST, EAST, SOUTH, NORTH, bit
+from dd_author import Layout, WEST, EAST, SOUTH, NORTH
 
-Z = 300.0      # balcony / upper-floor level (6 cells)
-CW = 400.0     # corridor width (hallways, 8 cells)
-T = 50.0       # abutment gap = one grid cell (matches Layout.wall / the engine's BuiltWallT)
-
-
-def total_run(dz, rise=18.0, run=30.0, max_angle=40.0):
-    if dz <= 1:
-        return 0.0
-    nr = math.ceil(dz / rise)
-    tanmax = math.tan(math.radians(min(max_angle, 89.0)))
-    na = math.ceil(dz / (run * tanmax)) if tanmax > 1e-4 else nr
-    return max(1, nr, na) * run
+CW = 400.0     # corridor / hall width (8 cells)
+Z = 300.0      # balcony / upper-floor base Z (6 cells)
+T = 50.0       # abutment gap = one grid cell
 
 
 def side_wing(L, bal, door_y, sign):
-    """A wing off a balcony door: short arm -> corner -> corridor with 3 rooms -> round-room shaft.
-    sign = +1 fans North, -1 fans South. All gaps are one cell (T)."""
-    arm = L.room(3050, door_y - CW / 2, 3450, door_y + CW / 2, floor=Z, height=300, open_edges=bit(WEST, EAST))
-    L.link(bal, arm, "Doorway", position=0)                       # door in the balcony wall at door_y
+    """A wing off a balcony door: short arm -> corner -> corridor with 3 rooms -> shaft.
+    sign = +1 fans North, -1 fans South. Every gap is one cell (T); openness is relational."""
+    arm = L.room(3050, door_y - CW / 2, 3450, door_y + CW / 2, level=1)
+    L.door(bal, arm)                                  # door in the balcony wall at door_y
 
-    nx0, nx1 = 3500.0, 3500.0 + CW                                # corner: one cell east of the arm
-    node = L.room(nx0, door_y - CW / 2, nx1, door_y + CW / 2, floor=Z, height=300)
-    L.rooms[node]["OpenEdgeMask"] = bit(WEST) | (bit(NORTH) if sign > 0 else bit(SOUTH))
+    node = L.room(3500, door_y - CW / 2, 3900, door_y + CW / 2, level=1)
+    L.passage(arm, node)                              # open corner
 
-    near = door_y + sign * (CW / 2 + T)                           # one cell off the corner
+    near = door_y + sign * (CW / 2 + T)
     far = near + sign * 1800.0
-    corr = L.room(nx0, min(near, far), nx1, max(near, far), floor=Z, height=300)
-    L.rooms[corr]["OpenEdgeMask"] = bit(NORTH) | bit(SOUTH)        # open at both ends (corner + shaft)
+    corr = L.room(3500, min(near, far), 3900, max(near, far), level=1)
+    L.passage(node, corr)
 
-    rx0 = nx1 + T                                                 # three standard rooms off the East side
+    rx0 = 3900 + T                                    # three rooms off the East side
     for k in (0, 1, 2):
-        ry = near + sign * (400.0 + k * 550.0)                    # 500-deep rooms, one-cell gaps (550 pitch)
-        r = L.room(rx0, ry - 250, rx0 + 550, ry + 250, floor=Z, height=300, open_edges=bit(WEST))
-        L.link(corr, r, "Doorway", position=0)
+        ry = near + sign * (400.0 + k * 500.0)
+        r = L.room(rx0, ry - 200, rx0 + 500, ry + 200, level=1)
+        L.door(corr, r)
 
-    tc = far + sign * (T + 300.0)                                 # round-room (square placeholder) stair shaft
-    L.room(nx0 - 50, tc - 300, nx1 + 50, tc + 300, floor=Z, height=300,
-           open_edges=(bit(SOUTH) if sign > 0 else bit(NORTH)))
+    tc = far + sign * (T + 300.0)                     # shaft (square placeholder for the round room)
+    shaft = L.room(3500, tc - 300, 3900, tc + 300, level=1)
+    L.passage(corr, shaft)
 
 
 L = Layout()
-RUN = total_run(Z)
+L.level(0, 250, 50)     # ground:  0 + 250 + 50 == 300 (the BaseZ invariant)
+L.level(Z, 300, 50)     # balcony / upper floor
 
-# ---------------------------------------------------------------- Great Hall + entrance
-hall = L.room(0, -1000, 3000, 1000, floor=0, height=800, open_edges=bit(EAST))
-app = L.room(-1050, -CW / 2, -50, CW / 2, floor=0, height=400, open_edges=bit(EAST))
-L.entry(app, WEST, "Doorway", width=350, height=300)
-L.link(hall, app, "Doorway", position=0, width=350, height=300)   # grand castle doors
+# ---------------------------------------------------------------- Great Hall + entrance (Level 0)
+hall = L.room(0, -1000, 3000, 1000, level=0, height=800)       # tall hall; balcony is a mezzanine in it
+app = L.room(-1050, -CW / 2, -50, CW / 2, level=0, height=400)
+L.entry(app, WEST, width=350, height=350)                      # grand castle doors
+L.door(hall, app, width=350, height=350)
 
-# guard station off the approach, with an attached weapons room
-guard = L.room(-850, -750, -350, -250, floor=0, height=300, open_edges=bit(NORTH))
-L.link(app, guard, "Doorway", position=0)
-weapons = L.room(-850, -1300, -350, -800, floor=0, height=300, open_edges=bit(NORTH))
-L.link(guard, weapons, "Doorway", position=0)
+guard = L.room(-850, -750, -350, -250, level=0, height=300)
+L.door(app, guard)
+weapons = L.room(-850, -1300, -350, -800, level=0, height=300)
+L.door(guard, weapons)
 
-# ---------------------------------------------------------------- throne end
-L.box(3000, 0, Z / 2, T, 2000 + 2 * T, Z)                         # ground wall behind the throne
-bal = L.room(2600, -1000, 3000, 1000, floor=Z, height=300,
-             open_edges=bit(NORTH, SOUTH), rail_edges=bit(WEST))
-L.exterior(bal, WEST, "Open", position=-750, width=300)           # rail gaps for the two staircases
-L.exterior(bal, WEST, "Open", position=750, width=300)
-L.stair(along_x=True, start_u=2600 - RUN, cross_v=-750, from_z=0, to_z=Z, width=300, direction=1)
-L.stair(along_x=True, start_u=2600 - RUN, cross_v=+750, from_z=0, to_z=Z, width=300, direction=1)
-L.box(2800, 0, 50, 300, 750, 100)       # dais platform (grid-aligned: center on a cell)
-L.box(2850, 0, 200, 150, 200, 200)      # throne (sits on the dais)
-L.box(2950, -250, 100, 50, 200, 200)    # display cases
-L.box(2950,  250, 100, 50, 200, 200)
+# ---------------------------------------------------------------- balcony + stair up (Level 1)
+bal = L.room(2600, -1000, 3000, 1000, level=1, ceil=False)     # roofless mezzanine, open to the hall above
+L.rail(bal, edge=WEST)                                         # guard rail over the hall drop
+L.stairwell(hall, bal, width=300)                              # climb from the hall onto the balcony
 
-# ---------------------------------------------------------------- the wings + royal suite
+# ---------------------------------------------------------------- the wings + royal suite (Level 1)
 side_wing(L, bal, door_y=-600, sign=-1)   # south wing
 side_wing(L, bal, door_y=+600, sign=+1)   # north wing (mirror)
 
-# central royal suite: hall extends out -> antechamber -> bedroom + bath + closet (one-cell gaps)
-ch = L.room(3050, -CW / 2, 4050, CW / 2, floor=Z, height=300, open_edges=bit(WEST))
-L.link(bal, ch, "Doorway", position=0)
-ante = L.room(4100, -400, 4700, 400, floor=Z, height=350, open_edges=bit(WEST))
-L.link(ch, ante, "Doorway", position=0)
-bed = L.room(4750, -700, 5750, 700, floor=Z, height=400, open_edges=bit(WEST))
-L.link(ante, bed, "Doorway", position=0)
-bath = L.room(4800, 750, 5300, 1250, floor=Z, height=300, open_edges=bit(SOUTH))
-L.link(bed, bath, "Doorway", position=0)
-closet = L.room(4800, -1250, 5300, -750, floor=Z, height=300, open_edges=bit(NORTH))
-L.link(bed, closet, "Doorway", position=0)
+ch = L.room(3050, -CW / 2, 4050, CW / 2, level=1);   L.door(bal, ch)
+ante = L.room(4100, -400, 4700, 400, level=1);        L.door(ch, ante)
+bed = L.room(4750, -700, 5750, 700, level=1, height=350); L.door(ante, bed)
+bath = L.room(4800, 750, 5300, 1250, level=1);        L.door(bed, bath)
+closet = L.room(4800, -1250, 5300, -750, level=1);    L.door(bed, closet)
+
+# ---------------------------------------------------------------- throne-room character (decorative)
+L.box(3000, 0, Z / 2, T, 2000 + 2 * T, Z)   # wall behind the throne (under the balcony)
+L.box(2800, 0, 50, 300, 750, 100)           # dais platform
+L.box(2850, 0, 200, 150, 200, 200)          # throne
+L.box(2950, -250, 100, 50, 200, 200)        # display cases
+L.box(2950,  250, 100, 50, 200, 200)
 
 if __name__ == "__main__":
     import ddrun
-    print("rooms", len(L.rooms), "links", len(L.links), "stairs", len(L.stairs), "boxes", len(L.boxes))
+    print("levels", len(L.levels), "rooms", len(L.rooms), "thresholds", len(L.thresholds), "boxes", len(L.boxes))
     L.write_apply("_apply.py")
     print(ddrun.run("_apply.py"))
