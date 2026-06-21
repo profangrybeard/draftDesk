@@ -56,3 +56,6 @@ def run():
 script = SPAWN.replace("__PTS__", json.dumps(META))
 print("seed points:", len(META))
 print(ddrun.run_text(script))
+
+import dd_save                          # persist the markers so they survive an editor restart
+print("saved:", dd_save.save())

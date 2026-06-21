@@ -150,3 +150,6 @@ print()
 dd_navcheck.check_connections(L)   # the gate: every connection still traversable
 print()
 dd_navcheck.check(L)
+
+import dd_save                          # persist the synced layout + markers so the drag survives a restart
+print("saved:", dd_save.save())
