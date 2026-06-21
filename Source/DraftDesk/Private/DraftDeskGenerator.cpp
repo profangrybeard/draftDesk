@@ -452,6 +452,7 @@ void ADraftDeskGenerator::BuildPreset_Custom(const FDraftDeskMetrics& M)
 	Levels = AuthoredLevels;
 	Rooms = AuthoredRooms;
 	Thresholds = AuthoredThresholds;
+	Flights = AuthoredFlights;
 	ExtraBoxes = AuthoredBoxes;
 	if (Levels.Num() == 0)
 	{
@@ -511,6 +512,12 @@ void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
 	for (FDraftDeskBlock& B : ExtraBoxes)
 	{
 		B.Center.X -= Dx; B.Center.Y -= Dy; B.Center.Z -= MinZ;
+	}
+	for (FDdFlight& F : Flights)
+	{
+		if (F.bAlongX) { F.StartU -= Dx; F.CrossV -= Dy; }
+		else           { F.StartU -= Dy; F.CrossV -= Dx; }
+		F.FromZ -= MinZ; F.ToZ -= MinZ;
 	}
 }
 
@@ -613,6 +620,7 @@ void ADraftDeskGenerator::Rebuild()
 	Levels.Reset();
 	Rooms.Reset();
 	Thresholds.Reset();
+	Flights.Reset();
 	ExtraBoxes.Reset();
 
 	if (!Spec)
@@ -718,6 +726,20 @@ void ADraftDeskGenerator::Rebuild()
 		else
 		{
 			EmitStairFlight(Fl.along_x, Fl.start_u, Fl.dir, Fl.cross_v, Fl.z0, Fl.z1, Fl.w, M);
+		}
+	}
+
+	// explicit authored flights (grand staircases that land at an edge; grid-EXEMPT fill, no slab carve)
+	for (const FDdFlight& F : Flights)
+	{
+		const float W = F.Width > 0.f ? F.Width : M.CorridorWidth;
+		if (F.bRamp)
+		{
+			EmitRamp(F.bAlongX, F.StartU, F.Dir, F.CrossV, F.FromZ, F.ToZ, W, M);
+		}
+		else
+		{
+			EmitStairFlight(F.bAlongX, F.StartU, F.Dir, F.CrossV, F.FromZ, F.ToZ, W, M);
 		}
 	}
 

@@ -38,6 +38,7 @@ class Layout:
         self.levels = []
         self.rooms = []
         self.thresholds = []
+        self.flights = []
         self.boxes = []
 
     # --- grid helpers ---
@@ -138,6 +139,12 @@ class Layout:
         self._thr(a, -1, "Skylight" if skylight else "Hatch", plane="Horizontal",
                   width=width, depth=depth, position=position, position2=position2)
 
+    # --- explicit flights (grand staircases that land at an edge; fill, not a slab pierce) ---
+    def flight(self, along_x, start_u, cross_v, from_z, to_z, width=0.0, direction=1, ramp=False):
+        self.flights.append(dict(bAlongX=bool(along_x), StartU=float(start_u), Dir=int(direction),
+                                 CrossV=float(cross_v), FromZ=float(from_z), ToZ=float(to_z),
+                                 Width=float(width), bRamp=bool(ramp)))
+
     # --- solids ---
     def box(self, cx, cy, cz, sx, sy, sz):
         self.boxes.append(dict(Center=(float(cx), float(cy), float(cz)),
@@ -165,7 +172,8 @@ class Layout:
         rooms = [dict(r, Min=v2(r["Min"]), Max=v2(r["Max"])) for r in self.rooms]
         boxes = [dict(Center=v3(b["Center"]), Size=v3(b["Size"])) for b in self.boxes]
         return {"Preset": "Custom", "AuthoredLevels": levels, "AuthoredRooms": rooms,
-                "AuthoredThresholds": self.thresholds, "AuthoredBoxes": boxes}
+                "AuthoredThresholds": self.thresholds, "AuthoredFlights": self.flights,
+                "AuthoredBoxes": boxes}
 
     def write_apply(self, path="_apply.py", gen=GEN):
         if self.snap > 0:
@@ -190,15 +198,16 @@ class Layout:
             "def run():\n"
             '    inst = {"refPath": GEN}\n'
             "    def setp(d): execute_tool(SET, json.dumps({\"instance\": inst, \"values\": json.dumps(d)}))\n"
-            '    setp({"AuthoredThresholds": [], "AuthoredBoxes": []})\n'
+            '    setp({"AuthoredThresholds": [], "AuthoredFlights": [], "AuthoredBoxes": []})\n'
             '    setp({"Preset": "Custom", "AuthoredRooms": []})\n'
             '    setp({"AuthoredLevels": []})\n'
             '    setp({"AuthoredLevels": PAYLOAD["AuthoredLevels"]})\n'
             '    setp({"AuthoredRooms": PAYLOAD["AuthoredRooms"]})\n'
-            '    setp({"AuthoredBoxes": PAYLOAD["AuthoredBoxes"]})\n'
+            '    setp({"AuthoredBoxes": PAYLOAD["AuthoredBoxes"], "AuthoredFlights": PAYLOAD["AuthoredFlights"]})\n'
             '    setp({"AuthoredThresholds": PAYLOAD["AuthoredThresholds"]})\n'
             '    out = {"ok": True, "levels": len(PAYLOAD["AuthoredLevels"]), "rooms": len(PAYLOAD["AuthoredRooms"]),\n'
-            '           "thresholds": len(PAYLOAD["AuthoredThresholds"]), "boxes": len(PAYLOAD["AuthoredBoxes"])}\n'
+            '           "thresholds": len(PAYLOAD["AuthoredThresholds"]), "flights": len(PAYLOAD["AuthoredFlights"]),\n'
+            '           "boxes": len(PAYLOAD["AuthoredBoxes"])}\n'
             "    # nav-sync: any footprint change re-fits the NavMeshBoundsVolume to the new geometry\n"
             '    b = execute_tool(BOUNDS, json.dumps({"actor": {"refPath": GEN}}))["returnValue"]\n'
             '    mn = b["min"]; mx = b["max"]; MARGIN = 500.0; BASE = 200.0\n'

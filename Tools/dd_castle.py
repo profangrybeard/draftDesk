@@ -16,11 +16,22 @@ Authored fully ON the 50cm grid (gap = T = one cell), so the engine's snap is a 
 dedup cleanly. 'Round room' is a square placeholder — the kit is axis-aligned (no curves yet).
 There is NO OpenEdgeMask: a corridor mouth is a Passage threshold; a balcony edge is a Rail threshold.
 """
+import math
 from dd_author import Layout, WEST, EAST, SOUTH, NORTH
 
 CW = 400.0     # corridor / hall width (8 cells)
 Z = 300.0      # balcony / upper-floor base Z (6 cells)
 T = 50.0       # abutment gap = one grid cell
+
+
+def total_run(dz, rise=18.0, run=30.0, max_angle=40.0):
+    """Horizontal run of a flight climbing dz (mirrors the engine's StepCount * StepRun)."""
+    if dz <= 1:
+        return 0.0
+    nr = math.ceil(dz / rise)
+    tanmax = math.tan(math.radians(min(max_angle, 89.0)))
+    na = math.ceil(dz / (run * tanmax)) if tanmax > 1e-4 else nr
+    return max(1, nr, na) * run
 
 
 def side_wing(L, bal, door_y, sign):
@@ -63,10 +74,16 @@ L.door(app, guard)
 weapons = L.room(-850, -1300, -350, -800, level=0, height=300)
 L.door(guard, weapons)
 
-# ---------------------------------------------------------------- balcony + stair up (Level 1)
+# ---------------------------------------------------------------- balcony + grand double staircase (Level 1)
 bal = L.room(2600, -1000, 3000, 1000, level=1, ceil=False)     # roofless mezzanine, open to the hall above
 L.rail(bal, edge=WEST)                                         # guard rail over the hall drop
-L.stairwell(hall, bal, width=300)                              # climb from the hall onto the balcony
+# Two grand staircases climb the back of the hall up to the balcony's front (west) edge, each landing
+# through a 300-wide gap in the rail at y = -/+750. The flights are FILL (solid stepped boxes), not a
+# slab pierce — you walk UP them from the hall floor onto the balcony.
+RUN = total_run(Z)
+for cv in (-750.0, +750.0):
+    L.flight(along_x=True, start_u=2600 - RUN, cross_v=cv, from_z=0.0, to_z=Z, width=300)
+    L.exterior(bal, WEST, "Passage", position=cv, width=300)   # rail gap at the landing
 
 # ---------------------------------------------------------------- the wings + royal suite (Level 1)
 side_wing(L, bal, door_y=-600, sign=-1)   # south wing

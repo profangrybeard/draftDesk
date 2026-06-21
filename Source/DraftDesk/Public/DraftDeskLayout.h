@@ -212,6 +212,47 @@ struct FDdThreshold
 	EDraftDeskEdge ExteriorEdge = EDraftDeskEdge::West;
 };
 
+/**
+ * An explicit stair / ramp flight — solid stepped FILL that climbs from FromZ to ToZ and LANDS at an
+ * edge (a grand staircase up to a balcony), as opposed to a Stairwell threshold which pierces a slab.
+ * Grid-EXEMPT (treads are StepRun-spaced, off the authoring grid — R4). Emitted via EmitStairFlight.
+ */
+USTRUCT(BlueprintType)
+struct FDdFlight
+{
+	GENERATED_BODY()
+
+	/** Flight runs along X (true) or Y (false). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	bool bAlongX = true;
+
+	/** The U coordinate (X if bAlongX else Y) where step 0 begins (the lower edge). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float StartU = 0.f;
+
+	/** Climb direction along U: +1 or -1. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	int32 Dir = 1;
+
+	/** Centre of the flight across its width. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float CrossV = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float FromZ = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float ToZ = 0.f;
+
+	/** Tread width; 0 => CorridorWidth. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float Width = 0.f;
+
+	/** Emit one pitched slab instead of stacked treads. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	bool bRamp = false;
+};
+
 /** A raw solid block: dais / podium, crate, cover block, pillar, ledge lip, bridge segment. */
 USTRUCT(BlueprintType)
 struct FDraftDeskBlock

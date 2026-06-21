@@ -81,6 +81,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
 	TArray<FDdThreshold> AuthoredThresholds;
 
+	/** Explicit grand-staircase / ramp flights (fill that lands at an edge; does NOT pierce a slab). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
+	TArray<FDdFlight> AuthoredFlights;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
 	TArray<FDraftDeskBlock> AuthoredBoxes;
 
@@ -112,6 +116,7 @@ private:
 	TArray<FDdLevel> Levels;
 	TArray<FDdRoom> Rooms;
 	TArray<FDdThreshold> Thresholds;
+	TArray<FDdFlight> Flights;
 	TArray<FDraftDeskBlock> ExtraBoxes;
 
 	// Effective per-build values (set at the top of Rebuild from the Spec's GridSnap + WallThickness):
