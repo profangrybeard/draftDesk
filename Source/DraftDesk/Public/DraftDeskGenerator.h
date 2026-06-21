@@ -10,49 +10,15 @@ class UMaterialInterface;
 class UDraftDeskSpec;
 struct FDraftDeskMetrics;
 
-/** An interval-with-openings carved into one wall plane. Internal build state (not reflected). */
-struct FDraftDeskOpening
-{
-	float Lo = 0.f;          // span on the wall's axis (cm)
-	float Hi = 0.f;
-	float Height = 0.f;      // top of the clear opening above BaseZ
-	float SillZ = 0.f;       // solid below the opening up to this height (windows); 0 => none
-	bool  bFullClear = false; // true => no lintel (open arch / stair mouth)
-};
-
-/** One wall plane in the edge ledger: spans [Lo,Hi] on a constant-plane line, carries its openings. */
-struct FDraftDeskEdgeRec
-{
-	uint8 Axis = 0;          // 0 => constant-X (wall faces ±X), 1 => constant-Y
-	float Plane = 0.f;       // the constant coordinate of the wall centreline
-	float Lo = 0.f;          // wall extent on the other axis
-	float Hi = 0.f;
-	float BaseZ = 0.f;       // bottom of the wall
-	float WallH = 0.f;       // height of the wall
-	bool  bRail = false;     // emit a half-height guard rail instead
-	TArray<FDraftDeskOpening> Openings;
-};
-
-/** A resolved stair / ramp flight, queued during CarveOpenings and emitted afterwards. */
-struct FDraftDeskStairJob
-{
-	bool  bAlongX = true;    // flight runs along X (true) or Y (false)
-	float StartU = 0.f;      // U coordinate where step 0 begins (the lower room's edge)
-	int32 Dir = 1;           // +1 / -1 climb direction along U
-	float CrossV = 0.f;      // centre across the flight
-	float Z0 = 0.f;          // lower floor Z
-	float Z1 = 0.f;          // upper floor Z
-	float W = 0.f;           // tread width
-	bool  bRamp = false;
-};
-
 /**
- * draftDesk blockout generator.
+ * draftDesk SHELL v1 blockout generator.
  *
- * Expands an EDraftDeskPreset into a rooms-and-links graph, then emits a greybox: per-room floors,
- * shared-wall-deduped perimeter walls with metric openings, and metric-correct stair flights for
- * any vertical link. Driven by a shared UDraftDeskSpec (the single source of truth for metrics);
- * editing the spec or the preset rebuilds in place. The actor origin is the entry threshold (R1).
+ * Expands an EDraftDeskPreset (or the Authored* arrays) into Levels + Rooms + Thresholds, then defers
+ * ALL geometry to the portable watertight core (DdShellCore.h): every room deposits 6 face rectangles,
+ * every threshold deposits an aperture, and each per-plane bucket emits union(faces) - union(apertures)
+ * via an exact 2D Boolean. The core hands back ready-to-place boxes + stair flight plans; this actor
+ * just renders them. There is no per-edge wall emit, no OpenEdgeMask: a face is solid by construction
+ * and opens only where a threshold proves a connection. The actor origin is the entry threshold (R1).
  */
 UCLASS()
 class DRAFTDESK_API ADraftDeskGenerator : public AActor
@@ -80,11 +46,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "100", Units = "cm"))
 	float HallLength = 1000.f;
 
-	/** Z gained per level in the vertical presets (Split Level, Tower). */
+	/** Minimum Z gained per stacked level in the vertical presets (clamped up to CeilingMin + a slab). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout", meta = (ClampMin = "50", Units = "cm"))
-	float FloorDelta = 300.f;
+	float FloorDelta = 350.f;
 
-	/** Emit ceiling slabs (off by default so a top-down editor cam reads the plan). */
+	/** Show ceiling/roof slabs. Off by default so a top-down editor cam reads the plan; the watertight
+	 *  VALIDATION always runs on the full shell regardless (this only filters what is rendered). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Layout")
 	bool bPlaceCeilings = false;
 
@@ -102,17 +69,17 @@ public:
 	TObjectPtr<UMaterialInterface> GridMaterial;
 
 	// --- Authored layout (used when Preset == Custom) ---
-	// The room-graph as editable data: dictate a layout by filling these. Indices in Links/Stairs
-	// refer to AuthoredRooms order. Exactly one Link should set bIsEntry (its threshold -> origin, R1).
+	// The room-graph as editable data: dictate a layout by filling these. Indices in Thresholds refer to
+	// AuthoredRooms order; Room.Level indexes AuthoredLevels. Exactly one Threshold sets bIsEntry (R1).
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
-	TArray<FDraftDeskRoom> AuthoredRooms;
+	TArray<FDdLevel> AuthoredLevels;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
-	TArray<FDraftDeskLink> AuthoredLinks;
+	TArray<FDdRoom> AuthoredRooms;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
-	TArray<FDraftDeskStair> AuthoredStairs;
+	TArray<FDdThreshold> AuthoredThresholds;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
 	TArray<FDraftDeskBlock> AuthoredBoxes;
@@ -132,7 +99,7 @@ public:
 	static float RampRun(float DZ, const FDraftDeskMetrics& M);
 
 protected:
-	/** Boxes (walls/floors/stairs/dais) — instances of one cube mesh. */
+	/** Boxes (walls/floors/ceilings/stairs/dais) — instances of one cube mesh. */
 	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
 	TObjectPtr<UInstancedStaticMeshComponent> Blocks;
 
@@ -142,14 +109,13 @@ protected:
 
 private:
 	// --- transient build buffers (not reflected) ---
-	TArray<FDraftDeskRoom> Rooms;
-	TArray<FDraftDeskLink> Links;
-	TArray<FDraftDeskStairJob> StairQueue;
+	TArray<FDdLevel> Levels;
+	TArray<FDdRoom> Rooms;
+	TArray<FDdThreshold> Thresholds;
 	TArray<FDraftDeskBlock> ExtraBoxes;
 
 	// Effective per-build values (set at the top of Rebuild from the Spec's GridSnap + WallThickness):
-	// BuiltWallT is WallThickness rounded UP to a whole grid cell (>= one cell) so abutting room faces
-	// stay one wall-gap apart and the edge ledger dedups them. BuiltSnap is the active grid.
+	// BuiltWallT is WallThickness rounded UP to a whole grid cell (>= one cell); BuiltSnap is the grid.
 	float BuiltWallT = 50.f;
 	FVector BuiltSnap = FVector(50.f, 50.f, 50.f);
 
@@ -170,30 +136,24 @@ private:
 	void BuildPreset_Mezzanine(const FDraftDeskMetrics& M);
 	void BuildPreset_Custom(const FDraftDeskMetrics& M);
 
-	int32 AddRoom(float MinX, float MinY, float MaxX, float MaxY, float FloorZ = 0.f, float Height = 0.f);
-	void  AddLink(int32 A, int32 B, EDraftDeskLinkKind Kind, float Position = 0.f, float Width = 0.f, float Height = 0.f);
-	void  AddEntry(int32 A, EDraftDeskEdge Edge, EDraftDeskLinkKind Kind = EDraftDeskLinkKind::Doorway, bool bEntry = true, float Position = 0.f);
+	// graph helpers (presets author through these)
+	int32 AddLevel(float BaseZ, float Height, float SlabT = 0.f);
+	int32 AddRoom(float MinX, float MinY, float MaxX, float MaxY, int32 Level = 0);
+	void  AddDoor(int32 A, int32 B, float Width = 0.f, float Height = 0.f, float Position = 0.f);
+	void  AddPassage(int32 A, int32 B);
+	void  AddExteriorDoor(int32 A, EDraftDeskEdge Edge, bool bEntry, float Width = 0.f, float Height = 0.f);
+	void  AddRail(int32 A, int32 B, EDraftDeskEdge Edge);
+	void  AddStairwell(int32 A, int32 B, float Width = 0.f, float Position = 0.f, float Position2 = 0.f, bool bRamp = false);
+	/** Build N contiguous stacked levels (BaseZ = k*(StoreyH + SlabT)); returns level count. */
+	int32 BuildStackedLevels(int32 Count, float StoreyH, float SlabT);
 
-	// --- emission passes ---
+	// --- emission ---
 	void NormalizeToEntry(const FDraftDeskMetrics& M);
-	/** Snap room footprints, floor heights, and solids onto BuiltSnap (stairs are exempt — R4). */
+	/** Snap room footprints, level/floor heights, and solids onto BuiltSnap (stairs are exempt — R4). */
 	void SnapLayoutToGrid(const FDraftDeskMetrics& M);
-	void EmitFloorsAndCeilings(const FDraftDeskMetrics& M);
-	void BuildEdgeLedger(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M);
-	void CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M);
-	void EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskMetrics& M);
-	void EmitStairFlight(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M);
-	void EmitRamp(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M);
-	void EmitColumns(const FDraftDeskRoom& R, const FDraftDeskMetrics& M);
-
-	/** Resolve the (axis, plane, sharedLo, sharedHi) a link sits on. Returns false if the rooms do not abut. */
-	bool ResolveLinkEdge(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
-		uint8& OutAxis, float& OutPlane, float& OutSharedLo, float& OutSharedHi) const;
-
-	/** Tolerantly find how two rooms face each other: the axis, BOTH facing wall planes, and the
-	 *  overlap interval. Works across a gap or unequal widths — the basis of a guaranteed connection. */
-	bool FaceConnection(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
-		uint8& OutAxis, float& OutPlaneA, float& OutPlaneB, float& OutLo, float& OutHi) const;
+	void EmitStairFlight(bool bAlongX, float StartU, int32 Dir, float CrossV, float Z0, float Z1, float W, const FDraftDeskMetrics& M);
+	void EmitRamp(bool bAlongX, float StartU, int32 Dir, float CrossV, float Z0, float Z1, float W, const FDraftDeskMetrics& M);
+	void EmitColumns(const FDdRoom& R, float FloorZ, float Height, const FDraftDeskMetrics& M);
 
 	// --- low-level primitives ---
 	void AddBox(const FVector& Center, const FVector& Size);

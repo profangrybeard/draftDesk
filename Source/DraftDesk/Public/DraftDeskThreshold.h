@@ -25,15 +25,39 @@ public:
 
 	/** What kind of connection this threshold is. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")
-	EDraftDeskLinkKind Kind = EDraftDeskLinkKind::Doorway;
+	EDdThresholdKind Kind = EDdThresholdKind::Doorway;
+
+	/** Vertical (wall) or Horizontal (slab). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")
+	EDdPlaneClass Plane = EDdPlaneClass::Vertical;
+
+	/** Owner room (index into the generator's rooms). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")
+	int32 RoomA = INDEX_NONE;
+
+	/** Other room; INDEX_NONE => exterior. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")
+	int32 RoomB = INDEX_NONE;
 
 	/** Clear width of the opening (cm); 0 => the spec's metric default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold", meta = (ClampMin = "0", Units = "cm"))
 	float Width = 0.f;
 
+	/** Horizontal-only run dimension of the hole (cm); 0 => derived from the flight run. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold", meta = (ClampMin = "0", Units = "cm"))
+	float Depth = 0.f;
+
 	/** Clear height of the opening (cm); 0 => the spec's metric default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold", meta = (ClampMin = "0", Units = "cm"))
 	float Height = 0.f;
+
+	/** Window sill above the floor (cm); 0 => HalfWallHeight. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold", meta = (ClampMin = "0", Units = "cm"))
+	float Sill = 0.f;
+
+	/** The single R1 entry threshold (its projected point becomes the actor origin). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")
+	bool bIsEntry = false;
 
 	/** Author-facing label, e.g. "great hall -> guard". Helps read the flow graph at a glance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")

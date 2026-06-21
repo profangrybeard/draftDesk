@@ -194,6 +194,7 @@ struct Threshold {
     Plane plane = VERTICAL;
     double position = 0, position2 = 0, width = 0, depth = 0, height = 0, sill = 0;
     bool is_entry = false;
+    bool bRamp = false;   // Stairwell/Atrium with bRamp => pitched slab instead of treads
     int edge = WEST;
     std::string name;
     Threshold() = default;
@@ -206,9 +207,21 @@ struct Threshold {
     Threshold& h(double v) { height = v; return *this; }
     Threshold& sl(double v) { sill = v; return *this; }
     Threshold& entry() { is_entry = true; return *this; }
+    Threshold& ramp() { bRamp = true; return *this; }
     Threshold& eg(int e) { edge = e; return *this; }
     Threshold& nm(const std::string& s) { name = s; return *this; }
 };
+
+// A stair / ramp flight derived alongside its slab well (the generator renders the treads;
+// the core owns the math so it stays testable). One per resolved Stairwell/Ramp threshold.
+struct Flight {
+    bool along_x; double start_u, cross_v, w, z0, z1; int dir; bool ramp; int thr;
+};
+
+// A ready-to-place 3D box (cm). emit_boxes() returns one per solid output rect across all buckets.
+// kind: 0 = wall, 1 = floor-bearing slab (someone stands on it — always emit), 2 = ceiling/roof-only
+// slab (hideable for a top-down editor view; the watertight VALIDATION always sees the full shell).
+struct Box { double cx, cy, cz, sx, sy, sz; int kind; };
 
 // Bucket key. Walls: cls in {0,1}, a = round(plane), tag=0. Slabs: cls=2, tag=0 + a=level index
 // (a real interface) OR tag=1 + a=round(ceiling_z) (a roof bucket with no level above).
@@ -239,6 +252,10 @@ struct Bucket {
     std::vector<Contributor> contributors;
     std::vector<Rect> voids;
     std::vector<Rect> solid;
+    // emission metadata (set at deposit; does NOT affect the watertight Boolean / digest).
+    // walls: `plane` = perpendicular coord, `thick` = wall thickness, box Z = the rect's B span.
+    // slabs: box Z = [slab_zlo, slab_zhi]; the rect's (A,B) is the XY footprint.
+    double plane = 0, thick = 0, slab_zlo = 0, slab_zhi = 0;
     std::vector<Rect> face_rects() const {
         std::vector<Rect> v; v.reserve(faces.size());
         for (const auto& f : faces) v.emplace_back(f.alo, f.ahi, f.blo, f.bhi);
@@ -268,6 +285,7 @@ public:
     std::map<Key, Bucket> buckets;
     std::vector<std::string> errors, warnings;
     std::vector<int> unresolved;
+    std::vector<Flight> flights;
 
     Shell(std::vector<Room> r, std::vector<Threshold> t, std::vector<Level> lv, Metrics m)
         : rooms(std::move(r)), thresholds(std::move(t)), levels(std::move(lv)), metrics(m) {
@@ -281,6 +299,30 @@ public:
         return it == buckets.end() ? nullptr : &it->second;
     }
     std::pair<double,double> eff(int idx) const { return eff_[idx]; }
+
+    // Every solid output rect as a placed 3D box (cm). Walls extrude `thick` on the perpendicular
+    // axis with B as the Z span; slabs extrude [slab_zlo, slab_zhi] with (A,B) the XY footprint.
+    std::vector<Box> emit_boxes() const {
+        std::vector<Box> out;
+        for (auto& kv : buckets) {
+            const Bucket& b = kv.second;
+            if (b.cls == CLASS_SLAB) {
+                double cz = (b.slab_zlo + b.slab_zhi) / 2, sz = b.slab_zhi - b.slab_zlo;
+                bool has_floor = false;
+                for (const Contributor& c : b.contributors) if (c.kind == 0) { has_floor = true; break; }
+                int kind = has_floor ? 1 : 2;
+                for (const Rect& r : b.solid)
+                    out.push_back({(r.alo+r.ahi)/2, (r.blo+r.bhi)/2, cz, r.ahi-r.alo, r.bhi-r.blo, sz, kind});
+            } else {
+                for (const Rect& r : b.solid) {
+                    double ca = (r.alo+r.ahi)/2, cz = (r.blo+r.bhi)/2, la = r.ahi-r.alo, hz = r.bhi-r.blo;
+                    if (b.cls == CLASS_X) out.push_back({b.plane, ca, cz, b.thick, la, hz, 0});  // const-X, A=Y
+                    else                  out.push_back({ca, b.plane, cz, la, b.thick, hz, 0});  // const-Y, A=X
+                }
+            }
+        }
+        return out;
+    }
 
 private:
     std::vector<std::pair<double,double>> eff_;
@@ -439,24 +481,32 @@ private:
             Room& r = rooms[idx];
             if (r.W() <= 1 || r.D() <= 1) continue;
             double fz = eff_[idx].first, H = eff_[idx].second, top = fz + H;
+            double st = m.slab_t();
             std::map<int,int> rails = rail_edges((int)idx);
             auto zt = [&](int edge) { return fz + (rails.count(edge) ? m.half_wall : H); };
-            wall_bucket(CLASS_X, r.x0 - T/2).faces.push_back({r.y0 - T, r.y1 + T, fz, zt(WEST), (int)idx});
-            wall_bucket(CLASS_X, r.x1 + T/2).faces.push_back({r.y0 - T, r.y1 + T, fz, zt(EAST), (int)idx});
-            wall_bucket(CLASS_Y, r.y0 - T/2).faces.push_back({r.x0 - T, r.x1 + T, fz, zt(SOUTH), (int)idx});
-            wall_bucket(CLASS_Y, r.y1 + T/2).faces.push_back({r.x0 - T, r.x1 + T, fz, zt(NORTH), (int)idx});
+            auto wall = [&](int cls, double plane, double a0, double a1, double z1) {
+                Bucket& b = wall_bucket(cls, plane);
+                b.plane = plane; b.thick = T;
+                b.faces.push_back({a0, a1, fz, z1, (int)idx});
+            };
+            wall(CLASS_X, r.x0 - T/2, r.y0 - T, r.y1 + T, zt(WEST));
+            wall(CLASS_X, r.x1 + T/2, r.y0 - T, r.y1 + T, zt(EAST));
+            wall(CLASS_Y, r.y0 - T/2, r.x0 - T, r.x1 + T, zt(SOUTH));
+            wall(CLASS_Y, r.y1 + T/2, r.x0 - T, r.x1 + T, zt(NORTH));
             Rect foot(r.x0 - T, r.x1 + T, r.y0 - T, r.y1 + T);
             if (r.floor) {
                 Iface f{true, r.level, 0};
                 Bucket& b = slab_bucket(f);
                 b.faces.push_back({foot.alo, foot.ahi, foot.blo, foot.bhi, (int)idx});
                 b.contributors.push_back({(int)idx, 0, fz});
+                b.thick = st; b.slab_zlo = fz - st; b.slab_zhi = fz;   // floor slab sits below the surface
             }
             if (r.ceil) {
                 Iface f = ceiling_interface(top);
                 Bucket& b = slab_bucket(f);
                 b.faces.push_back({foot.alo, foot.ahi, foot.blo, foot.bhi, (int)idx});
                 b.contributors.push_back({(int)idx, 1, top});
+                b.thick = st; b.slab_zlo = top; b.slab_zhi = top + st; // ceiling slab sits above the room
             }
         }
     }
@@ -586,18 +636,21 @@ private:
         double syl = std::max(Lo.y0, Hi.y0), syh = std::min(Lo.y1, Hi.y1);
         double dz = std::fabs(fzB - fzA), run = step_total_run(dz, m);
         bool along_x = (sxh > sxl && syh > syl) ? ((sxh - sxl) >= (syh - syl)) : (Lo.W() >= Lo.D());
-        Rect well;
+        Rect well; double start_u, cv, width;
         if (along_x) {
-            double cv = ((syh > syl) ? (syl + syh)/2 : (Hi.y0 + Hi.y1)/2) + t.position2;
-            double width = t.width > 0 ? t.width : std::max(m.corridor_width, (syh > syl) ? (syh - syl) : m.corridor_width);
-            double u0 = ((sxh > sxl) ? (sxl + sxh)/2 : (Hi.x0 + Hi.x1)/2) - run/2 + t.position;
-            well = Rect(u0, u0 + run, cv - width/2, cv + width/2);
+            cv = ((syh > syl) ? (syl + syh)/2 : (Hi.y0 + Hi.y1)/2) + t.position2;
+            width = t.width > 0 ? t.width : std::max(m.corridor_width, (syh > syl) ? (syh - syl) : m.corridor_width);
+            start_u = ((sxh > sxl) ? (sxl + sxh)/2 : (Hi.x0 + Hi.x1)/2) - run/2 + t.position;
+            well = Rect(start_u, start_u + run, cv - width/2, cv + width/2);
         } else {
-            double cv = ((sxh > sxl) ? (sxl + sxh)/2 : (Hi.x0 + Hi.x1)/2) + t.position2;
-            double width = t.width > 0 ? t.width : std::max(m.corridor_width, (sxh > sxl) ? (sxh - sxl) : m.corridor_width);
-            double v0 = ((syh > syl) ? (syl + syh)/2 : (Hi.y0 + Hi.y1)/2) - run/2 + t.position;
-            well = Rect(cv - width/2, cv + width/2, v0, v0 + run);
+            cv = ((sxh > sxl) ? (sxl + sxh)/2 : (Hi.x0 + Hi.x1)/2) + t.position2;
+            width = t.width > 0 ? t.width : std::max(m.corridor_width, (sxh > sxl) ? (sxh - sxl) : m.corridor_width);
+            start_u = ((syh > syl) ? (syl + syh)/2 : (Hi.y0 + Hi.y1)/2) - run/2 + t.position;
+            well = Rect(cv - width/2, cv + width/2, start_u, start_u + run);
         }
+        // the flight fills the well from the lower floor to the upper floor (raw extent, grid-EXEMPT — R4)
+        flights.push_back({along_x, start_u, cv, width, eff_[lo_i].first, eff_[hi_i].first, 1,
+                           (t.kind == Ramp || t.bRamp), ti});
         well = round_out(well, m.grid);
         if (sxh > sxl && syh > syl) {
             Rect clamped = clamp_rect(well, Rect(sxl, sxh, syl, syh), m.grid);

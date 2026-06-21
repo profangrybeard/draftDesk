@@ -4,34 +4,65 @@
 #include "DraftDeskLayout.generated.h"
 
 /**
- * Layout primitives for the draftDesk room-graph engine.
+ * SHELL v1 layout primitives for the draftDesk room-graph engine.
  *
- * A layout is a set of Rooms (axis-aligned interior footprints at a FloorZ) joined by Links
- * (openings or vertical flights on a shared edge). Geometry is a pure function of (Rooms, Links,
- * Metrics): walls grow OUTWARD from the interior extents by WallThickness/2, so authored metrics
- * (corridor width, ceiling, door) are the true clear dimensions (R4). A corridor is just a thin room.
+ * A layout is a set of Levels (ordered storeys), Rooms (axis-aligned interior footprints on a Level),
+ * and Thresholds (the SINGLE opening primitive: door = passage = window = rail = stairwell = hatch =
+ * atrium). Geometry is a pure function of (Levels, Rooms, Thresholds, Metrics): every room deposits a
+ * solid rectangle on each of its 6 faces; a face is solid BY CONSTRUCTION and opens ONLY where a
+ * threshold proves a connection. Walls grow OUTWARD from the interior extents by WallThickness/2, so
+ * authored metrics (corridor width, ceiling, door) are the true clear dimensions (R4).
  *
- * For now the editable surface is the EDraftDeskPreset enum; the structs are transient build buffers,
- * trivially promotable to authored arrays later.
+ * There is no OpenEdgeMask and no RailEdgeMask: openness is RELATIONAL (a threshold), never a unary
+ * bit. The watertight Boolean + 5 validator assertions live in the portable core (DdShellCore.h); the
+ * generator converts these reflected structs into the core's plain structs at the build boundary.
  */
 
-/** How a Link is realised on the shared edge between two rooms (or a room and the exterior). */
+/** The kind of opening a Threshold carves. One primitive; differs only by plane family + cap/sill. */
 UENUM(BlueprintType)
-enum class EDraftDeskLinkKind : uint8
+enum class EDdThresholdKind : uint8
 {
 	/** Walled opening with a lintel (a door). */
-	Doorway  UMETA(DisplayName = "Doorway"),
-	/** Full-clear gap, no lintel (an open archway / corridor mouth). */
-	Open     UMETA(DisplayName = "Open Arch"),
-	/** Opening with a sill below and a lintel above (a window / embrasure / firing slit). */
-	Window   UMETA(DisplayName = "Window"),
-	/** Stacked-slab stair flight (requires a FloorZ delta between the rooms). */
-	Stairs   UMETA(DisplayName = "Stairs"),
-	/** Single pitched slab (requires a FloorZ delta). */
-	Ramp     UMETA(DisplayName = "Ramp")
+	Doorway   UMETA(DisplayName = "Doorway"),
+	/** Full-clear gap, no lintel (open archway / corridor mouth). Width defaults to the full overlap. */
+	Passage   UMETA(DisplayName = "Passage"),
+	/** Sill below + clear band + lintel above (a window / embrasure / firing slit). */
+	Window    UMETA(DisplayName = "Window"),
+	/** The source room's face is capped to HalfWallHeight on this edge (a guard rail over a drop). */
+	Rail      UMETA(DisplayName = "Rail"),
+	/** A vertical shaft: carves a hole in the slab(s) between two levels and fills it with a stair flight. */
+	Stairwell UMETA(DisplayName = "Stairwell"),
+	/** Like Stairwell but a single pitched slab instead of treads (also settable via bRamp). */
+	Ramp      UMETA(DisplayName = "Ramp"),
+	/** A bounded hole in this room's ceiling slab (capped on all four sides). */
+	Hatch     UMETA(DisplayName = "Hatch"),
+	/** A hatch left open to the sky (roof bucket). */
+	Skylight  UMETA(DisplayName = "Skylight"),
+	/** Suppresses the slab above a tall room over the void footprint (double-height / mezzanine void). */
+	Atrium    UMETA(DisplayName = "Atrium")
 };
 
-/** The built-in layout the generator expands into Rooms + Links. */
+/** Which plane family a Threshold carves. */
+UENUM(BlueprintType)
+enum class EDdPlaneClass : uint8
+{
+	/** Carves a WALL between RoomA and RoomB (or the exterior). */
+	Vertical   UMETA(DisplayName = "Vertical (wall)"),
+	/** Carves the floor/ceiling SLAB between a lower and an upper room. */
+	Horizontal UMETA(DisplayName = "Horizontal (slab)")
+};
+
+/** Edge identity. Used for an exterior threshold's wall edge and (legacy) presets. */
+UENUM(BlueprintType)
+enum class EDraftDeskEdge : uint8
+{
+	West  = 0, // -X
+	East  = 1, // +X
+	South = 2, // -Y
+	North = 3  // +Y
+};
+
+/** The built-in layout the generator expands into Levels + Rooms + Thresholds. */
 UENUM(BlueprintType)
 enum class EDraftDeskPreset : uint8
 {
@@ -42,27 +73,43 @@ enum class EDraftDeskPreset : uint8
 	TJunction    UMETA(DisplayName = "T-Junction"),
 	Cross        UMETA(DisplayName = "Cross (4-way)"),
 	Grid2x2      UMETA(DisplayName = "2x2 Room Grid"),
-	SplitLevel   UMETA(DisplayName = "Split Level (stairs)"),
+	SplitLevel   UMETA(DisplayName = "Split Level (stairwell)"),
 	Tower        UMETA(DisplayName = "Tower (3-level climb)"),
 	Ramp         UMETA(DisplayName = "Ramp"),
-	Mezzanine    UMETA(DisplayName = "Mezzanine (balcony)"),
-	/** Build from the AuthoredRooms / AuthoredLinks / AuthoredStairs / AuthoredBoxes arrays. */
+	Mezzanine    UMETA(DisplayName = "Mezzanine (atrium + balcony)"),
+	/** Build from the AuthoredLevels / AuthoredRooms / AuthoredThresholds / AuthoredBoxes arrays. */
 	Custom       UMETA(DisplayName = "Custom (authored)")
 };
 
-/** Edge identity, as a bit index. Bits compose into OpenEdgeMask / RailEdgeMask. */
-UENUM()
-enum class EDraftDeskEdge : uint8
+/**
+ * A first-class storey. Levels are the discrete vertical truth; a room references one by index.
+ * INVARIANT (reconciled + asserted at build): BaseZ[n+1] == BaseZ[n] + Height[n] + SlabT.
+ */
+USTRUCT(BlueprintType)
+struct FDdLevel
 {
-	West  = 0, // -X
-	East  = 1, // +X
-	South = 2, // -Y
-	North = 3  // +Y
+	GENERATED_BODY()
+
+	/** 0..N, contiguous, ordered. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	int32 Index = 0;
+
+	/** Top-of-floor of this level (actor-local cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float BaseZ = 0.f;
+
+	/** Nominal clear storey height; a room's Height overrides this. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float Height = 300.f;
+
+	/** Floor/ceiling slab thickness for this level's ceiling interface. 0 => the generator's BuiltWallT. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float SlabT = 0.f;
 };
 
-/** An axis-aligned interior footprint at a floor height. Walls are derived OUTSIDE these extents. */
+/** An axis-aligned interior footprint on a Level. A full 3D shell (4 walls + floor + ceiling). */
 USTRUCT(BlueprintType)
-struct FDraftDeskRoom
+struct FDdRoom
 {
 	GENERATED_BODY()
 
@@ -74,33 +121,29 @@ struct FDraftDeskRoom
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	FVector2D Max = FVector2D::ZeroVector;
 
-	/** Top-of-floor height (actor-local cm). Drives verticality. */
+	/** Storey index into the layout's Levels[]. The discrete key for stack dedup + leak-proof separation. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	float FloorZ = 0.f;
+	int32 Level = 0;
 
-	/** Clear interior height; 0 => max(CeilingMin, DoorHeight + 60). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	/** OVERRIDE only. < 0 (default) => FloorZ := Levels[Level].BaseZ. If >= 0, reconciled to the level (warn+snap). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float FloorZ = -1.f;
+
+	/** OVERRIDE clear interior height; 0 => Levels[Level].Height (clamped to CeilingMin). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
 	float Height = 0.f;
 
-	/** Emit a ceiling slab for this room. */
+	/** Emit a floor slab (clear for a pit / open drop). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	bool bCeiling = false;
+	bool bFloor = true;
 
-	/** Suppress the floor slab: a true pit / chasm / kill-floor / open drop. */
+	/** Emit a ceiling slab (clear for a courtyard / open-to-above / roofless mezzanine). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	bool bNoFloor = false;
+	bool bCeil = true;
 
 	/** Emit the legacy column grid in this room. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	bool bColumns = false;
-
-	/** Bits (1<<EDraftDeskEdge): these edges register NO exterior wall (open corridor mouths, voids). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	int32 OpenEdgeMask = 0;
-
-	/** Bits (1<<EDraftDeskEdge): these edges emit a HalfWallHeight guard rail instead of a full wall. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	int32 RailEdgeMask = 0;
 
 	// --- inline helpers (not reflected) ---
 	float W()  const { return Max.X - Min.X; }
@@ -109,86 +152,64 @@ struct FDraftDeskRoom
 	float CY() const { return (Min.Y + Max.Y) * 0.5f; }
 };
 
-/** A connection between RoomA and RoomB (RoomB == INDEX_NONE => the exterior). */
+/**
+ * The single opening primitive between RoomA and RoomB (RoomB == INDEX_NONE => the exterior).
+ * door = passage = window = rail = stairwell = hatch = atrium, differing only by Kind + Plane.
+ */
 USTRUCT(BlueprintType)
-struct FDraftDeskLink
+struct FDdThreshold
 {
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	int32 RoomA = INDEX_NONE;
 
-	/** INDEX_NONE => exterior; then ExteriorEdge selects which edge of RoomA carries the opening. */
+	/** INDEX_NONE => exterior (then ExteriorEdge selects RoomA's edge for a Vertical threshold). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	int32 RoomB = INDEX_NONE;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	EDraftDeskLinkKind Kind = EDraftDeskLinkKind::Doorway;
+	EDdThresholdKind Kind = EDdThresholdKind::Doorway;
 
-	/** Signed offset of the opening along the shared edge from the shared-interval centre; 0 = centred. */
+	/** Vertical (wall) or Horizontal (slab). Stairwell/Ramp/Hatch/Skylight/Atrium imply Horizontal. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	EDdPlaneClass Plane = EDdPlaneClass::Vertical;
+
+	/** Signed offset along the shared interval (vertical drag axis; horizontal U axis). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	float Position = 0.f;
 
-	/** Opening width; 0 => DoorWidth (Doorway) or CorridorWidth (Open/Stairs/Ramp). */
+	/** Signed offset on the 2nd in-plane axis (horizontal openings are 2D). Unused for vertical. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	float Position2 = 0.f;
+
+	/** Opening width; 0 => kind default (DoorWidth / full overlap for Passage / stair footprint). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
 	float Width = 0.f;
 
-	/** Opening clear height; 0 => DoorHeight (Doorway) or WindowClearHeight (Window). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	/** Horizontal-only: the run dimension of the hole. 0 => derived from the flight run (off-grid-out). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
+	float Depth = 0.f;
+
+	/** Vertical clear height; 0 => DoorHeight / WindowClearHeight. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
 	float Height = 0.f;
 
-	/** Window sill height above the floor; 0 => HalfWallHeight. Only used by Kind == Window. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	/** Window sill above the floor; 0 => HalfWallHeight. (Rail uses HalfWallHeight as its top.) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk", meta = (Units = "cm"))
 	float Sill = 0.f;
 
-	/** Exactly one Link is the entry: its threshold is translated to the actor origin (R1). */
+	/** Exactly one threshold is the entry: its projected point is the actor origin (R1). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	bool bIsEntry = false;
 
-	/** Which edge of RoomA the opening sits on when RoomB == INDEX_NONE (exterior). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	EDraftDeskEdge ExteriorEdge = EDraftDeskEdge::West;
-};
-
-/**
- * An explicitly-placed stair / ramp flight, for verticality that auto-stairs-from-a-link can't
- * derive (a mezzanine over a room, a switchback, a flight that doesn't span two abutting rooms).
- * Steps are built to StepRise / StepRun within MaxStepTraversalAngle (R4).
- */
-USTRUCT(BlueprintType)
-struct FDraftDeskStair
-{
-	GENERATED_BODY()
-
-	/** Flight runs along X (true) or Y (false). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	bool bAlongX = true;
-
-	/** The U coordinate (X if bAlongX else Y) where step 0 begins (the lower edge). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	float StartU = 0.f;
-
-	/** Climb direction along U: +1 or -1. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	int32 Dir = 1;
-
-	/** Centre of the flight across its width. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	float CrossV = 0.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	float FromZ = 0.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	float ToZ = 0.f;
-
-	/** Tread width; 0 => CorridorWidth. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
-	float Width = 0.f;
-
-	/** Emit one pitched slab instead of stacked treads. */
+	/** Stairwell/Atrium with bRamp => a pitched slab instead of treads. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
 	bool bRamp = false;
+
+	/** Which edge of RoomA the opening sits on when RoomB == INDEX_NONE and Plane == Vertical. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk")
+	EDraftDeskEdge ExteriorEdge = EDraftDeskEdge::West;
 };
 
 /** A raw solid block: dais / podium, crate, cover block, pillar, ledge lip, bridge segment. */

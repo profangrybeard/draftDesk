@@ -1,6 +1,7 @@
 #include "DraftDeskGenerator.h"
 
 #include "DraftDeskSpec.h"
+#include "Shell/DdShellCore.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
@@ -9,23 +10,6 @@
 #if WITH_EDITOR
 #include "UObject/UnrealType.h"
 #endif
-
-// ---- file-local helpers --------------------------------------------------
-
-namespace
-{
-	/** Resolved interior height of a room: explicit, else clamped to ceiling / door clearance. */
-	float EffH(const FDraftDeskRoom& R, const FDraftDeskMetrics& M)
-	{
-		return R.Height > 0.f ? R.Height : FMath::Max(M.CeilingMin, M.DoorHeight + 60.f);
-	}
-
-	/** Mask bit for an edge. */
-	int32 EdgeBit(EDraftDeskEdge E)
-	{
-		return 1 << static_cast<int32>(E);
-	}
-}
 
 // ---- ctor / construction / editor plumbing (unchanged) -------------------
 
@@ -99,7 +83,7 @@ void ADraftDeskGenerator::HandleObjectPropertyChanged(UObject* Object, FProperty
 }
 #endif
 
-// ---- low-level primitives ------------------------------------------------
+// ---- low-level primitives (unchanged) ------------------------------------
 
 void ADraftDeskGenerator::AddBox(const FVector& Center, const FVector& Size)
 {
@@ -129,7 +113,7 @@ void ADraftDeskGenerator::AddColumn(float X, float Y, float BaseZ, float Height,
 	}
 }
 
-// ---- stair math (single source of truth for presets + emitter) -----------
+// ---- stair math (single source of truth for presets + emitter; unchanged) -
 
 int32 ADraftDeskGenerator::StepCount(float DZ, const FDraftDeskMetrics& M)
 {
@@ -158,40 +142,80 @@ float ADraftDeskGenerator::RampRun(float DZ, const FDraftDeskMetrics& M)
 	return (TanA > KINDA_SMALL_NUMBER) ? DZ / TanA : DZ;
 }
 
-// ---- graph helpers -------------------------------------------------------
+// ---- graph helpers (presets author through these) ------------------------
 
-int32 ADraftDeskGenerator::AddRoom(float MinX, float MinY, float MaxX, float MaxY, float FloorZ, float Height)
+int32 ADraftDeskGenerator::AddLevel(float BaseZ, float Height, float SlabT)
 {
-	FDraftDeskRoom R;
+	FDdLevel L;
+	L.Index = Levels.Num();
+	L.BaseZ = BaseZ;
+	L.Height = Height;
+	L.SlabT = SlabT;
+	return Levels.Add(L);
+}
+
+int32 ADraftDeskGenerator::AddRoom(float MinX, float MinY, float MaxX, float MaxY, int32 Level)
+{
+	FDdRoom R;
 	R.Min = FVector2D(MinX, MinY);
 	R.Max = FVector2D(MaxX, MaxY);
-	R.FloorZ = FloorZ;
-	R.Height = Height;
+	R.Level = Level;
 	return Rooms.Add(R);
 }
 
-void ADraftDeskGenerator::AddLink(int32 A, int32 B, EDraftDeskLinkKind Kind, float Position, float Width, float Height)
+void ADraftDeskGenerator::AddDoor(int32 A, int32 B, float Width, float Height, float Position)
 {
-	FDraftDeskLink L;
-	L.RoomA = A;
-	L.RoomB = B;
-	L.Kind = Kind;
-	L.Position = Position;
-	L.Width = Width;
-	L.Height = Height;
-	Links.Add(L);
+	FDdThreshold T;
+	T.RoomA = A; T.RoomB = B;
+	T.Kind = EDdThresholdKind::Doorway; T.Plane = EDdPlaneClass::Vertical;
+	T.Width = Width; T.Height = Height; T.Position = Position;
+	Thresholds.Add(T);
 }
 
-void ADraftDeskGenerator::AddEntry(int32 A, EDraftDeskEdge Edge, EDraftDeskLinkKind Kind, bool bEntry, float Position)
+void ADraftDeskGenerator::AddPassage(int32 A, int32 B)
 {
-	FDraftDeskLink L;
-	L.RoomA = A;
-	L.RoomB = INDEX_NONE;
-	L.Kind = Kind;
-	L.Position = Position;
-	L.bIsEntry = bEntry;
-	L.ExteriorEdge = Edge;
-	Links.Add(L);
+	FDdThreshold T;
+	T.RoomA = A; T.RoomB = B;
+	T.Kind = EDdThresholdKind::Passage; T.Plane = EDdPlaneClass::Vertical;
+	Thresholds.Add(T);
+}
+
+void ADraftDeskGenerator::AddExteriorDoor(int32 A, EDraftDeskEdge Edge, bool bEntry, float Width, float Height)
+{
+	FDdThreshold T;
+	T.RoomA = A; T.RoomB = INDEX_NONE;
+	T.Kind = EDdThresholdKind::Doorway; T.Plane = EDdPlaneClass::Vertical;
+	T.bIsEntry = bEntry; T.ExteriorEdge = Edge;
+	T.Width = Width; T.Height = Height;
+	Thresholds.Add(T);
+}
+
+void ADraftDeskGenerator::AddRail(int32 A, int32 B, EDraftDeskEdge Edge)
+{
+	FDdThreshold T;
+	T.RoomA = A; T.RoomB = B;
+	T.Kind = EDdThresholdKind::Rail; T.Plane = EDdPlaneClass::Vertical;
+	T.ExteriorEdge = Edge;
+	Thresholds.Add(T);
+}
+
+void ADraftDeskGenerator::AddStairwell(int32 A, int32 B, float Width, float Position, float Position2, bool bRamp)
+{
+	FDdThreshold T;
+	T.RoomA = A; T.RoomB = B;
+	T.Kind = bRamp ? EDdThresholdKind::Ramp : EDdThresholdKind::Stairwell;
+	T.Plane = EDdPlaneClass::Horizontal;
+	T.Width = Width; T.Position = Position; T.Position2 = Position2; T.bRamp = bRamp;
+	Thresholds.Add(T);
+}
+
+int32 ADraftDeskGenerator::BuildStackedLevels(int32 Count, float StoreyH, float SlabT)
+{
+	for (int32 K = 0; K < Count; ++K)
+	{
+		AddLevel(K * (StoreyH + SlabT), StoreyH, SlabT);
+	}
+	return Count;
 }
 
 // ---- presets -------------------------------------------------------------
@@ -219,21 +243,21 @@ void ADraftDeskGenerator::BuildPreset(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_RoomHallRoom(const FDraftDeskMetrics& M)
 {
 	const float T = BuiltWallT;
-	const float ED = CellSize * 0.5f; // entry room depth/width (legacy 600 at CellSize 1200)
-	const float MD = CellSize;        // main room depth/width (legacy 1200)
+	const float ED = CellSize * 0.5f;
+	const float MD = CellSize;
 	const float HL = HallLength;
 	const float CW = M.CorridorWidth;
+	AddLevel(0.f, M.CeilingMin, T);
 
 	const int32 A = AddRoom(0.f, -ED * 0.5f, ED, ED * 0.5f);
 	const int32 H = AddRoom(ED + T, -CW * 0.5f, ED + T + HL, CW * 0.5f);
-	Rooms[H].OpenEdgeMask = EdgeBit(EDraftDeskEdge::West) | EdgeBit(EDraftDeskEdge::East);
 	const float Cx0 = ED + T + HL + T;
 	const int32 C = AddRoom(Cx0, -MD * 0.5f, Cx0 + MD, MD * 0.5f);
 	Rooms[C].bColumns = true;
 
-	AddEntry(A, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, /*bEntry*/ true);
-	AddLink(A, H, EDraftDeskLinkKind::Doorway);
-	AddLink(H, C, EDraftDeskLinkKind::Doorway);
+	AddExteriorDoor(A, EDraftDeskEdge::West, /*bEntry*/ true);
+	AddDoor(A, H);
+	AddDoor(H, C);
 
 	// raised dais near the back of the main room (legacy character piece)
 	const float DaisH = 80.f;
@@ -245,16 +269,18 @@ void ADraftDeskGenerator::BuildPreset_RoomHallRoom(const FDraftDeskMetrics& M)
 
 void ADraftDeskGenerator::BuildPreset_SingleRoom(const FDraftDeskMetrics& M)
 {
+	AddLevel(0.f, M.CeilingMin, BuiltWallT);
 	const int32 R = AddRoom(0.f, -CellSize * 0.5f, CellSize, CellSize * 0.5f);
-	AddEntry(R, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
+	AddExteriorDoor(R, EDraftDeskEdge::West, true);
 }
 
 void ADraftDeskGenerator::BuildPreset_Corridor(const FDraftDeskMetrics& M)
 {
 	const float CW = M.CorridorWidth;
+	AddLevel(0.f, M.CeilingMin, BuiltWallT);
 	const int32 R = AddRoom(0.f, -CW * 0.5f, 3.f * CellSize, CW * 0.5f);
-	AddEntry(R, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddEntry(R, EDraftDeskEdge::East, EDraftDeskLinkKind::Doorway, false);
+	AddExteriorDoor(R, EDraftDeskEdge::West, true);
+	AddExteriorDoor(R, EDraftDeskEdge::East, false);
 }
 
 void ADraftDeskGenerator::BuildPreset_LBend(const FDraftDeskMetrics& M)
@@ -262,17 +288,16 @@ void ADraftDeskGenerator::BuildPreset_LBend(const FDraftDeskMetrics& M)
 	const float C = CellSize;
 	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
+	AddLevel(0.f, M.CeilingMin, T);
 
 	const int32 HArm = AddRoom(0.f, -CW * 0.5f, 2.f * C, CW * 0.5f);
 	const int32 Node = AddRoom(2.f * C + T, -CW * 0.5f, 2.f * C + T + CW, CW * 0.5f);
 	const int32 VArm = AddRoom(2.f * C + T, CW * 0.5f + T, 2.f * C + T + CW, CW * 0.5f + T + 2.f * C);
 
-	Rooms[HArm].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East);
-	Rooms[Node].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West) | EdgeBit(EDraftDeskEdge::North);
-	Rooms[VArm].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::South);
-
-	AddEntry(HArm, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddEntry(VArm, EDraftDeskEdge::North, EDraftDeskLinkKind::Doorway, false);
+	AddPassage(HArm, Node); // HArm east <-> Node west
+	AddPassage(Node, VArm); // Node north <-> VArm south
+	AddExteriorDoor(HArm, EDraftDeskEdge::West, true);
+	AddExteriorDoor(VArm, EDraftDeskEdge::North, false);
 }
 
 void ADraftDeskGenerator::BuildPreset_TJunction(const FDraftDeskMetrics& M)
@@ -280,16 +305,15 @@ void ADraftDeskGenerator::BuildPreset_TJunction(const FDraftDeskMetrics& M)
 	const float C = CellSize;
 	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
+	AddLevel(0.f, M.CeilingMin, T);
 
 	const int32 Main = AddRoom(0.f, -CW * 0.5f, 3.f * C, CW * 0.5f);
 	const int32 Branch = AddRoom(1.5f * C - CW * 0.5f, CW * 0.5f + T, 1.5f * C + CW * 0.5f, CW * 0.5f + T + 2.f * C);
-	Rooms[Branch].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::South);
 
-	AddEntry(Main, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddEntry(Main, EDraftDeskEdge::East, EDraftDeskLinkKind::Doorway, false);
-	AddEntry(Branch, EDraftDeskEdge::North, EDraftDeskLinkKind::Doorway, false);
-	// full-clear mouth carved into the main corridor's north wall
-	AddLink(Main, Branch, EDraftDeskLinkKind::Open);
+	AddExteriorDoor(Main, EDraftDeskEdge::West, true);
+	AddExteriorDoor(Main, EDraftDeskEdge::East, false);
+	AddExteriorDoor(Branch, EDraftDeskEdge::North, false);
+	AddPassage(Main, Branch); // full-clear mouth into the corridor's north wall
 }
 
 void ADraftDeskGenerator::BuildPreset_Cross(const FDraftDeskMetrics& M)
@@ -298,6 +322,7 @@ void ADraftDeskGenerator::BuildPreset_Cross(const FDraftDeskMetrics& M)
 	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
 	const float Hh = CW * 0.5f;
+	AddLevel(0.f, M.CeilingMin, T);
 
 	const int32 WArm = AddRoom(0.f, -Hh, 2.f * C, Hh);
 	const float Nx0 = 2.f * C + T;
@@ -307,87 +332,72 @@ void ADraftDeskGenerator::BuildPreset_Cross(const FDraftDeskMetrics& M)
 	const int32 SArm = AddRoom(Nx0, -Hh - T - 2.f * C, Nx0 + CW, -Hh - T);
 	const int32 NArm = AddRoom(Nx0, Hh + T, Nx0 + CW, Hh + T + 2.f * C);
 
-	Rooms[WArm].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East);
-	Rooms[EArm].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West);
-	Rooms[SArm].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::North);
-	Rooms[NArm].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::South);
-	Rooms[Node].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West) | EdgeBit(EDraftDeskEdge::East)
-		| EdgeBit(EDraftDeskEdge::South) | EdgeBit(EDraftDeskEdge::North);
+	AddPassage(WArm, Node);
+	AddPassage(Node, EArm);
+	AddPassage(SArm, Node);
+	AddPassage(Node, NArm);
 
-	AddEntry(WArm, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddEntry(EArm, EDraftDeskEdge::East, EDraftDeskLinkKind::Doorway, false);
-	AddEntry(SArm, EDraftDeskEdge::South, EDraftDeskLinkKind::Doorway, false);
-	AddEntry(NArm, EDraftDeskEdge::North, EDraftDeskLinkKind::Doorway, false);
+	AddExteriorDoor(WArm, EDraftDeskEdge::West, true);
+	AddExteriorDoor(EArm, EDraftDeskEdge::East, false);
+	AddExteriorDoor(SArm, EDraftDeskEdge::South, false);
+	AddExteriorDoor(NArm, EDraftDeskEdge::North, false);
 }
 
 void ADraftDeskGenerator::BuildPreset_Grid2x2(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
 	const float T = BuiltWallT;
+	AddLevel(0.f, M.CeilingMin, T);
 
 	const int32 SW = AddRoom(0.f, -C, C, 0.f);
 	const int32 SE = AddRoom(C + T, -C, 2.f * C + T, 0.f);
 	const int32 NW = AddRoom(0.f, T, C, C + T);
 	const int32 NE = AddRoom(C + T, T, 2.f * C + T, C + T);
 
-	AddEntry(SW, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddLink(SW, SE, EDraftDeskLinkKind::Doorway); // shared X plane -> one wall
-	AddLink(NW, NE, EDraftDeskLinkKind::Doorway);
-	AddLink(SW, NW, EDraftDeskLinkKind::Doorway); // shared Y plane -> one wall
-	AddLink(SE, NE, EDraftDeskLinkKind::Doorway);
+	AddExteriorDoor(SW, EDraftDeskEdge::West, true);
+	AddDoor(SW, SE); // shared X plane -> one wall
+	AddDoor(NW, NE);
+	AddDoor(SW, NW); // shared Y plane -> one wall
+	AddDoor(SE, NE);
 }
 
 void ADraftDeskGenerator::BuildPreset_SplitLevel(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
 	const float T = BuiltWallT;
-	const float Run = TotalRun(FloorDelta, M);
+	const float StoreyH = FMath::Max(M.CeilingMin, FloorDelta - T);
+	BuildStackedLevels(2, StoreyH, T);
 
-	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 0.f);
-	const float R2x0 = C + T + Run; // gap = T + Run so the upper floor is the implicit flush landing
-	const int32 R2 = AddRoom(R2x0, -C * 0.5f, R2x0 + C, C * 0.5f, FloorDelta);
+	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, /*Level*/ 0);
+	const int32 R2 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, /*Level*/ 1); // stacked above R1
 
-	Rooms[R1].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East);
-	Rooms[R2].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West);
-
-	AddEntry(R1, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddLink(R1, R2, EDraftDeskLinkKind::Stairs);
+	AddExteriorDoor(R1, EDraftDeskEdge::West, true);
+	AddStairwell(R1, R2, M.CorridorWidth); // shaft carves the upper floor; flight fills it
 }
 
 void ADraftDeskGenerator::BuildPreset_Tower(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
 	const float T = BuiltWallT;
-	const float Run = TotalRun(FloorDelta, M);
+	const float StoreyH = FMath::Max(M.CeilingMin, FloorDelta - T);
 	const int32 NLevels = 3;
+	BuildStackedLevels(NLevels, StoreyH, T);
 
-	float X = 0.f;
-	float Z = 0.f;
 	int32 Prev = INDEX_NONE;
 	for (int32 K = 0; K < NLevels; ++K)
 	{
-		const int32 R = AddRoom(X, -C * 0.5f, X + C, C * 0.5f, Z);
-		if (Prev != INDEX_NONE)
-		{
-			Rooms[R].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West);
-		}
-		if (K < NLevels - 1)
-		{
-			Rooms[R].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East);
-		}
-
+		const int32 R = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, K);
 		if (Prev == INDEX_NONE)
 		{
-			AddEntry(R, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
+			AddExteriorDoor(R, EDraftDeskEdge::West, true);
 		}
 		else
 		{
-			AddLink(Prev, R, EDraftDeskLinkKind::Stairs);
+			// offset alternate flights across Y so the shafts don't stack on one spot
+			const float Off = (K % 2 == 0) ? -C * 0.25f : C * 0.25f;
+			AddStairwell(Prev, R, M.CorridorWidth, 0.f, Off);
 		}
-
 		Prev = R;
-		X += C + T + Run;
-		Z += FloorDelta;
 	}
 }
 
@@ -395,67 +405,57 @@ void ADraftDeskGenerator::BuildPreset_Ramp(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
 	const float T = BuiltWallT;
-	const float Run = RampRun(FloorDelta, M);
+	const float StoreyH = FMath::Max(M.CeilingMin, FloorDelta - T);
+	BuildStackedLevels(2, StoreyH, T);
 
-	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 0.f);
-	const float R2x0 = C + T + Run; // gap sized to the ramp run so the upper floor is the flush top
-	const int32 R2 = AddRoom(R2x0, -C * 0.5f, R2x0 + C, C * 0.5f, FloorDelta);
+	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 0);
+	const int32 R2 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 1);
 
-	Rooms[R1].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East);
-	Rooms[R2].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::West);
-
-	AddEntry(R1, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	AddLink(R1, R2, EDraftDeskLinkKind::Ramp);
+	AddExteriorDoor(R1, EDraftDeskEdge::West, true);
+	AddStairwell(R1, R2, M.CorridorWidth, 0.f, 0.f, /*bRamp*/ true);
 }
 
 void ADraftDeskGenerator::BuildPreset_Mezzanine(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
 	const float T = BuiltWallT;
-	const float CW = M.CorridorWidth;
-	const float Run = TotalRun(FloorDelta, M);
+	const float StoreyH = FMath::Max(M.CeilingMin, FloorDelta - T);
+	BuildStackedLevels(2, StoreyH, T);
 
-	// tall main room
-	const int32 Big = AddRoom(0.f, -C, 2.f * C, C, 0.f, FMath::Max(2.f * M.CeilingMin, FloorDelta + M.CeilingMin));
+	// Tall main room spanning both storeys: Height override = two storeys + the mid slab.
+	const float TallH = 2.f * StoreyH + T;
+	const int32 Big = AddRoom(0.f, -C, 2.f * C, C, /*Level*/ 0);
+	Rooms[Big].Height = TallH;
 
-	// balcony over the back third, raised; its West edge overlooks the room (guard rail),
-	// its E/N/S edges coincide with the big room's outer walls (no double wall).
-	const float BalX0 = 1.4f * C;
-	const int32 Bal = AddRoom(BalX0, -C, 2.f * C, C, FloorDelta);
-	Rooms[Bal].OpenEdgeMask |= EdgeBit(EDraftDeskEdge::East) | EdgeBit(EDraftDeskEdge::North) | EdgeBit(EDraftDeskEdge::South);
-	Rooms[Bal].RailEdgeMask |= EdgeBit(EDraftDeskEdge::West);
+	// Mezzanine over the back third at level 1; its floor covers only that sub-rect.
+	const float MezX0 = 1.4f * C;
+	const int32 Mez = AddRoom(MezX0, -C, 2.f * C, C, /*Level*/ 1);
+	Rooms[Mez].bCeil = false; // open to the tall volume above
 
-	AddEntry(Big, EDraftDeskEdge::West, EDraftDeskLinkKind::Doorway, true);
-	// a centred gap in the balcony's West rail where the stair lands
-	AddEntry(Bal, EDraftDeskEdge::West, EDraftDeskLinkKind::Open, false);
+	// Atrium void suppresses the level-1 slab over the FRONT (where there is no mezzanine).
+	// Void footprint x[0, MezX0], full depth. Centre it on the Big room with a Position offset.
+	const float VoidW = MezX0;                 // 0 .. MezX0
+	const float VoidPos = -(2.f * C - VoidW) * 0.5f; // shift left so the void hugs the front
+	FDdThreshold Atr;
+	Atr.RoomA = Big; Atr.RoomB = INDEX_NONE;
+	Atr.Kind = EDdThresholdKind::Atrium; Atr.Plane = EDdPlaneClass::Horizontal;
+	Atr.Width = VoidW; Atr.Depth = 2.f * C; Atr.Position = VoidPos;
+	Thresholds.Add(Atr);
 
-	// explicit stair climbing +X to the balcony front, centred on Y
-	FDraftDeskStairJob J;
-	J.bAlongX = true; J.Dir = 1;
-	J.StartU = BalX0 - Run;
-	J.CrossV = 0.f;
-	J.Z0 = 0.f; J.Z1 = FloorDelta;
-	J.W = CW;
-	StairQueue.Add(J);
+	AddRail(Mez, INDEX_NONE, EDraftDeskEdge::West); // guard rail along the mezzanine drop
+	AddExteriorDoor(Big, EDraftDeskEdge::West, true);
+	AddStairwell(Big, Mez, M.CorridorWidth); // flight up into the mezzanine
 }
 
 void ADraftDeskGenerator::BuildPreset_Custom(const FDraftDeskMetrics& M)
 {
+	Levels = AuthoredLevels;
 	Rooms = AuthoredRooms;
-	Links = AuthoredLinks;
+	Thresholds = AuthoredThresholds;
 	ExtraBoxes = AuthoredBoxes;
-	for (const FDraftDeskStair& S : AuthoredStairs)
+	if (Levels.Num() == 0)
 	{
-		FDraftDeskStairJob J;
-		J.bAlongX = S.bAlongX;
-		J.StartU = S.StartU;
-		J.Dir = (S.Dir >= 0 ? 1 : -1);
-		J.CrossV = S.CrossV;
-		J.Z0 = S.FromZ;
-		J.Z1 = S.ToZ;
-		J.W = S.Width > 0.f ? S.Width : M.CorridorWidth;
-		J.bRamp = S.bRamp;
-		StairQueue.Add(J);
+		AddLevel(0.f, M.CeilingMin, BuiltWallT); // single-level fallback
 	}
 }
 
@@ -467,49 +467,50 @@ void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
 	{
 		return;
 	}
+	const float T = BuiltWallT;
 
-	float Dx = 0.f;
-	float Dy = 0.f;
-	for (const FDraftDeskLink& L : Links)
+	float Dx = 0.f, Dy = 0.f;
+	for (const FDdThreshold& Th : Thresholds)
 	{
-		if (!L.bIsEntry)
+		if (!Th.bIsEntry || Th.Plane != EDdPlaneClass::Vertical)
 		{
 			continue;
 		}
-		uint8 Axis = 0;
-		float Plane = 0.f, SLo = 0.f, SHi = 0.f;
-		if (ResolveLinkEdge(L, M, Axis, Plane, SLo, SHi))
+		if (Th.RoomA < 0 || Th.RoomA >= Rooms.Num())
 		{
-			const float Along = (SLo + SHi) * 0.5f + L.Position;
-			if (Axis == 0) { Dx = Plane; Dy = Along; }
-			else { Dx = Along; Dy = Plane; }
-			break; // keep scanning if this entry link didn't resolve
+			continue;
 		}
+		const FDdRoom& R = Rooms[Th.RoomA];
+		switch (Th.ExteriorEdge)
+		{
+		case EDraftDeskEdge::West:  Dx = R.Min.X - T * 0.5f; Dy = R.CY() + Th.Position; break;
+		case EDraftDeskEdge::East:  Dx = R.Max.X + T * 0.5f; Dy = R.CY() + Th.Position; break;
+		case EDraftDeskEdge::South: Dx = R.CX() + Th.Position; Dy = R.Min.Y - T * 0.5f; break;
+		case EDraftDeskEdge::North: Dx = R.CX() + Th.Position; Dy = R.Max.Y + T * 0.5f; break;
+		default: break;
+		}
+		break;
 	}
 
-	float MinZ = Rooms[0].FloorZ;
-	for (const FDraftDeskRoom& R : Rooms)
+	float MinZ = Levels.Num() > 0 ? Levels[0].BaseZ : 0.f;
+	for (const FDdLevel& L : Levels)
 	{
-		MinZ = FMath::Min(MinZ, R.FloorZ);
+		MinZ = FMath::Min(MinZ, L.BaseZ);
 	}
 
-	for (FDraftDeskRoom& R : Rooms)
+	for (FDdLevel& L : Levels)
+	{
+		L.BaseZ -= MinZ;
+	}
+	for (FDdRoom& R : Rooms)
 	{
 		R.Min.X -= Dx; R.Max.X -= Dx;
 		R.Min.Y -= Dy; R.Max.Y -= Dy;
-		R.FloorZ -= MinZ;
+		if (R.FloorZ >= 0.f) { R.FloorZ -= MinZ; }
 	}
 	for (FDraftDeskBlock& B : ExtraBoxes)
 	{
 		B.Center.X -= Dx; B.Center.Y -= Dy; B.Center.Z -= MinZ;
-	}
-	// explicit stairs queued by a preset (Mezzanine / Custom) are pre-normalize; auto-stairs from
-	// links are added later in normalized space, so only translate what is already queued here.
-	for (FDraftDeskStairJob& J : StairQueue)
-	{
-		if (J.bAlongX) { J.StartU -= Dx; J.CrossV -= Dy; }
-		else { J.StartU -= Dy; J.CrossV -= Dx; }
-		J.Z0 -= MinZ; J.Z1 -= MinZ;
 	}
 }
 
@@ -518,472 +519,56 @@ void ADraftDeskGenerator::SnapLayoutToGrid(const FDraftDeskMetrics& M)
 	auto Snap = [](float V, float Step) { return Step > KINDA_SMALL_NUMBER ? FMath::GridSnap(V, Step) : V; };
 	const float SX = M.GridSnap.X, SY = M.GridSnap.Y, SZ = M.GridSnap.Z;
 
-	// Room footprints + floor/clear heights land on the grid. Equal-width abutting rooms snap their
-	// shared faces identically (same value in -> same value out), so the ledger still dedups them; the
-	// one-cell BuiltWallT keeps the gap a whole cell, so the wall planes stay coincident.
-	for (FDraftDeskRoom& R : Rooms)
+	for (FDdLevel& L : Levels)
+	{
+		L.BaseZ = Snap(L.BaseZ, SZ);
+		L.Height = Snap(L.Height, SZ);
+		if (L.SlabT > 0.f) { L.SlabT = Snap(L.SlabT, SZ); }
+	}
+	for (FDdRoom& R : Rooms)
 	{
 		R.Min.X = Snap(R.Min.X, SX); R.Max.X = Snap(R.Max.X, SX);
 		R.Min.Y = Snap(R.Min.Y, SY); R.Max.Y = Snap(R.Max.Y, SY);
-		R.FloorZ = Snap(R.FloorZ, SZ);
-		if (R.Height > 0.f) { R.Height = Snap(R.Height, SZ); }
+		if (R.FloorZ >= 0.f) { R.FloorZ = Snap(R.FloorZ, SZ); }
+		if (R.Height > 0.f)  { R.Height = Snap(R.Height, SZ); }
 	}
-
-	// Solids (dais / cover / pillar / ledge): snap placement onto the grid; keep authored sizes.
 	for (FDraftDeskBlock& B : ExtraBoxes)
 	{
 		B.Center.X = Snap(B.Center.X, SX);
 		B.Center.Y = Snap(B.Center.Y, SY);
 		B.Center.Z = Snap(B.Center.Z, SZ);
 	}
-
-	// Stairs/ramps are EXEMPT: a flight is metric-correct (StepRise/StepRun within MaxStepTraversalAngle,
-	// R4) and snapping treads to the grid would violate that. Queued flights inherit the snapped floor Z
-	// of the rooms they bridge (CarveOpenings derives auto-stairs after this pass), so the landings align.
+	// Stairs/ramps are EXEMPT (the core derives flights grid-EXEMPT — R4); their wells round OUT to grid.
 }
 
-void ADraftDeskGenerator::EmitFloorsAndCeilings(const FDraftDeskMetrics& M)
+void ADraftDeskGenerator::EmitStairFlight(bool bAlongX, float StartU, int32 Dir, float CrossV, float Z0, float Z1, float W, const FDraftDeskMetrics& M)
 {
-	const float T = BuiltWallT;
-	for (const FDraftDeskRoom& R : Rooms)
-	{
-		if (R.W() <= 1.f || R.D() <= 1.f)
-		{
-			continue;
-		}
-		if (!R.bNoFloor)
-		{
-			AddBox(FVector(R.CX(), R.CY(), R.FloorZ - T * 0.5f), FVector(R.W() + 2.f * T, R.D() + 2.f * T, T));
-		}
-		if (R.bCeiling || bPlaceCeilings)
-		{
-			const float H = EffH(R, M);
-			AddBox(FVector(R.CX(), R.CY(), R.FloorZ + H + T * 0.5f), FVector(R.W() + 2.f * T, R.D() + 2.f * T, T));
-		}
-	}
-}
-
-void ADraftDeskGenerator::BuildEdgeLedger(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M)
-{
-	const float T = BuiltWallT;
-
-	auto Reg = [&](uint8 Axis, float Plane, float Lo, float Hi, float BaseZ, float WallH, bool bRail)
-	{
-		const FString Key = FString::Printf(TEXT("%d|%d|%d|%d"), static_cast<int32>(Axis),
-			FMath::RoundToInt(Plane), FMath::RoundToInt(Lo), FMath::RoundToInt(Hi));
-		if (FDraftDeskEdgeRec* Ex = Ledger.Find(Key))
-		{
-			const float Top = FMath::Max(Ex->BaseZ + Ex->WallH, BaseZ + WallH);
-			Ex->BaseZ = FMath::Min(Ex->BaseZ, BaseZ);
-			Ex->WallH = Top - Ex->BaseZ;
-			Ex->bRail = Ex->bRail && bRail; // a shared wall is solid unless BOTH sides want a rail
-		}
-		else
-		{
-			FDraftDeskEdgeRec E;
-			E.Axis = Axis; E.Plane = Plane; E.Lo = Lo; E.Hi = Hi;
-			E.BaseZ = BaseZ; E.WallH = WallH; E.bRail = bRail;
-			Ledger.Add(Key, E);
-		}
-	};
-
-	for (const FDraftDeskRoom& R : Rooms)
-	{
-		if (R.W() <= 1.f || R.D() <= 1.f)
-		{
-			continue;
-		}
-		const float H = EffH(R, M);
-		const float YLo = R.Min.Y - T, YHi = R.Max.Y + T;
-		const float XLo = R.Min.X - T, XHi = R.Max.X + T;
-
-		if (!(R.OpenEdgeMask & EdgeBit(EDraftDeskEdge::West)))
-		{
-			Reg(0, R.Min.X - T * 0.5f, YLo, YHi, R.FloorZ, H, (R.RailEdgeMask & EdgeBit(EDraftDeskEdge::West)) != 0);
-		}
-		if (!(R.OpenEdgeMask & EdgeBit(EDraftDeskEdge::East)))
-		{
-			Reg(0, R.Max.X + T * 0.5f, YLo, YHi, R.FloorZ, H, (R.RailEdgeMask & EdgeBit(EDraftDeskEdge::East)) != 0);
-		}
-		if (!(R.OpenEdgeMask & EdgeBit(EDraftDeskEdge::South)))
-		{
-			Reg(1, R.Min.Y - T * 0.5f, XLo, XHi, R.FloorZ, H, (R.RailEdgeMask & EdgeBit(EDraftDeskEdge::South)) != 0);
-		}
-		if (!(R.OpenEdgeMask & EdgeBit(EDraftDeskEdge::North)))
-		{
-			Reg(1, R.Max.Y + T * 0.5f, XLo, XHi, R.FloorZ, H, (R.RailEdgeMask & EdgeBit(EDraftDeskEdge::North)) != 0);
-		}
-	}
-}
-
-bool ADraftDeskGenerator::ResolveLinkEdge(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
-	uint8& OutAxis, float& OutPlane, float& OutSharedLo, float& OutSharedHi) const
-{
-	const float T = BuiltWallT;
-	const float Eps = 1.f;
-	// Authored data can be momentarily inconsistent (the property system applies arrays one at a
-	// time, each triggering a rebuild), so never trust a link's room indices without bounds-checking.
-	if (L.RoomA < 0 || L.RoomA >= Rooms.Num())
-	{
-		return false;
-	}
-	const FDraftDeskRoom& A = Rooms[L.RoomA];
-
-	if (L.RoomB == INDEX_NONE)
-	{
-		switch (L.ExteriorEdge)
-		{
-		case EDraftDeskEdge::West:  OutAxis = 0; OutPlane = A.Min.X - T * 0.5f; OutSharedLo = A.Min.Y; OutSharedHi = A.Max.Y; break;
-		case EDraftDeskEdge::East:  OutAxis = 0; OutPlane = A.Max.X + T * 0.5f; OutSharedLo = A.Min.Y; OutSharedHi = A.Max.Y; break;
-		case EDraftDeskEdge::South: OutAxis = 1; OutPlane = A.Min.Y - T * 0.5f; OutSharedLo = A.Min.X; OutSharedHi = A.Max.X; break;
-		case EDraftDeskEdge::North: OutAxis = 1; OutPlane = A.Max.Y + T * 0.5f; OutSharedLo = A.Min.X; OutSharedHi = A.Max.X; break;
-		default: return false;
-		}
-		return true;
-	}
-
-	if (L.RoomB < 0 || L.RoomB >= Rooms.Num())
-	{
-		return false;
-	}
-	const FDraftDeskRoom& B = Rooms[L.RoomB];
-	if (FMath::Abs(A.Max.X + T - B.Min.X) < Eps) { OutAxis = 0; OutPlane = A.Max.X + T * 0.5f; }
-	else if (FMath::Abs(B.Max.X + T - A.Min.X) < Eps) { OutAxis = 0; OutPlane = B.Max.X + T * 0.5f; }
-	else if (FMath::Abs(A.Max.Y + T - B.Min.Y) < Eps) { OutAxis = 1; OutPlane = A.Max.Y + T * 0.5f; }
-	else if (FMath::Abs(B.Max.Y + T - A.Min.Y) < Eps) { OutAxis = 1; OutPlane = B.Max.Y + T * 0.5f; }
-	else { return false; }
-
-	if (OutAxis == 0)
-	{
-		OutSharedLo = FMath::Max(A.Min.Y, B.Min.Y);
-		OutSharedHi = FMath::Min(A.Max.Y, B.Max.Y);
-	}
-	else
-	{
-		OutSharedLo = FMath::Max(A.Min.X, B.Min.X);
-		OutSharedHi = FMath::Min(A.Max.X, B.Max.X);
-	}
-	return true;
-}
-
-bool ADraftDeskGenerator::FaceConnection(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
-	uint8& OutAxis, float& OutPlaneA, float& OutPlaneB, float& OutLo, float& OutHi) const
-{
-	if (L.RoomA < 0 || L.RoomA >= Rooms.Num() || L.RoomB < 0 || L.RoomB >= Rooms.Num())
-	{
-		return false;
-	}
-	const FDraftDeskRoom& A = Rooms[L.RoomA];
-	const FDraftDeskRoom& B = Rooms[L.RoomB];
-	const float T = BuiltWallT;
-	const float Adj = 1.f; // allow exact-abut and any positive gap; reject only deep overlap
-
-	bool bFound = false;
-	float BestGap = TNumericLimits<float>::Max();
-
-	// X-facing: the rooms face on X only where they overlap on Y
-	const float OyLo = FMath::Max(A.Min.Y, B.Min.Y), OyHi = FMath::Min(A.Max.Y, B.Max.Y);
-	if (OyHi > OyLo)
-	{
-		if (A.Max.X <= B.Min.X + Adj) // A is west of B
-		{
-			const float Gap = FMath::Abs(B.Min.X - A.Max.X);
-			if (Gap < BestGap) { BestGap = Gap; bFound = true; OutAxis = 0; OutPlaneA = A.Max.X + T * 0.5f; OutPlaneB = B.Min.X - T * 0.5f; OutLo = OyLo; OutHi = OyHi; }
-		}
-		if (B.Max.X <= A.Min.X + Adj) // B is west of A
-		{
-			const float Gap = FMath::Abs(A.Min.X - B.Max.X);
-			if (Gap < BestGap) { BestGap = Gap; bFound = true; OutAxis = 0; OutPlaneA = A.Min.X - T * 0.5f; OutPlaneB = B.Max.X + T * 0.5f; OutLo = OyLo; OutHi = OyHi; }
-		}
-	}
-	// Y-facing: the rooms face on Y only where they overlap on X
-	const float OxLo = FMath::Max(A.Min.X, B.Min.X), OxHi = FMath::Min(A.Max.X, B.Max.X);
-	if (OxHi > OxLo)
-	{
-		if (A.Max.Y <= B.Min.Y + Adj) // A is south of B
-		{
-			const float Gap = FMath::Abs(B.Min.Y - A.Max.Y);
-			if (Gap < BestGap) { BestGap = Gap; bFound = true; OutAxis = 1; OutPlaneA = A.Max.Y + T * 0.5f; OutPlaneB = B.Min.Y - T * 0.5f; OutLo = OxLo; OutHi = OxHi; }
-		}
-		if (B.Max.Y <= A.Min.Y + Adj) // B is south of A
-		{
-			const float Gap = FMath::Abs(A.Min.Y - B.Max.Y);
-			if (Gap < BestGap) { BestGap = Gap; bFound = true; OutAxis = 1; OutPlaneA = A.Min.Y - T * 0.5f; OutPlaneB = B.Max.Y + T * 0.5f; OutLo = OxLo; OutHi = OxHi; }
-		}
-	}
-	return bFound; // the closest facing wins
-}
-
-void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M)
-{
-	for (const FDraftDeskLink& L : Links)
-	{
-		// Vertical links: queue a flight from the room geometry directly (the rooms are
-		// separated by the run, so they don't abut — ResolveLinkEdge would reject them).
-		if ((L.Kind == EDraftDeskLinkKind::Stairs || L.Kind == EDraftDeskLinkKind::Ramp) && L.RoomB != INDEX_NONE)
-		{
-			if (L.RoomA < 0 || L.RoomA >= Rooms.Num() || L.RoomB < 0 || L.RoomB >= Rooms.Num())
-			{
-				continue; // skip a link with stale/out-of-range room indices (mid-edit authored data)
-			}
-			const FDraftDeskRoom& A = Rooms[L.RoomA];
-			const FDraftDeskRoom& B = Rooms[L.RoomB];
-			const FDraftDeskRoom& Lo = (A.FloorZ <= B.FloorZ) ? A : B;
-			const FDraftDeskRoom& Hi = (A.FloorZ <= B.FloorZ) ? B : A;
-
-			FDraftDeskStairJob J;
-			J.bRamp = (L.Kind == EDraftDeskLinkKind::Ramp);
-			J.Z0 = Lo.FloorZ;
-			J.Z1 = Hi.FloorZ;
-
-			const float GapX = FMath::Max(B.Min.X - A.Max.X, A.Min.X - B.Max.X);
-			const float GapY = FMath::Max(B.Min.Y - A.Max.Y, A.Min.Y - B.Max.Y);
-			if (GapX >= GapY)
-			{
-				J.bAlongX = true;
-				const float CLo = FMath::Max(A.Min.Y, B.Min.Y);
-				const float CHi = FMath::Min(A.Max.Y, B.Max.Y);
-				J.CrossV = (CLo + CHi) * 0.5f + L.Position;
-				J.W = L.Width > 0.f ? L.Width : FMath::Max(M.CorridorWidth, CHi - CLo); // fill the opening
-				if (Hi.Min.X > Lo.Max.X) { J.StartU = Lo.Max.X; J.Dir = 1; }
-				else { J.StartU = Lo.Min.X; J.Dir = -1; }
-			}
-			else
-			{
-				J.bAlongX = false;
-				const float CLo = FMath::Max(A.Min.X, B.Min.X);
-				const float CHi = FMath::Min(A.Max.X, B.Max.X);
-				J.CrossV = (CLo + CHi) * 0.5f + L.Position;
-				J.W = L.Width > 0.f ? L.Width : FMath::Max(M.CorridorWidth, CHi - CLo); // fill the opening
-				if (Hi.Min.Y > Lo.Max.Y) { J.StartU = Lo.Max.Y; J.Dir = 1; }
-				else { J.StartU = Lo.Min.Y; J.Dir = -1; }
-			}
-			StairQueue.Add(J);
-			continue;
-		}
-
-		// Horizontal links GUARANTEE a passage: carve the opening through BOTH walls between the two
-		// rooms (or the single exterior wall), found tolerantly so a gap or unequal widths cannot block it.
-		uint8 Axis = 0;
-		float PlaneA = 0.f, PlaneB = 0.f, SLo = 0.f, SHi = 0.f;
-		bool bResolved = false;
-		if (L.RoomB == INDEX_NONE)
-		{
-			if (ResolveLinkEdge(L, M, Axis, PlaneA, SLo, SHi)) { PlaneB = PlaneA; bResolved = true; }
-		}
-		else
-		{
-			bResolved = FaceConnection(L, M, Axis, PlaneA, PlaneB, SLo, SHi);
-		}
-		if (!bResolved)
-		{
-			// Loud failure (folds in the old EmitThresholds broken-marker warning): a declared link
-			// that can't resolve to a wall is a "missing door" — warn so it is never a silent seal.
-			UE_LOG(LogTemp, Warning,
-				TEXT("draftDesk: unresolved link (RoomA=%d RoomB=%d kind=%d) — opening not carved."),
-				L.RoomA, L.RoomB, static_cast<int32>(L.Kind));
-			continue;
-		}
-
-		const bool bWindow = (L.Kind == EDraftDeskLinkKind::Window);
-		const float W = L.Width > 0.f ? L.Width
-			: (L.Kind == EDraftDeskLinkKind::Doorway || bWindow ? M.DoorWidth : M.CorridorWidth);
-
-		// Keep the opening inside the shared facing span [SLo,SHi] (where the two rooms actually meet)
-		// so it can never be wider than the shared wall, slide off it, or open where the neighbour
-		// isn't — for ANY authored Position, from any source. Computed ONCE so both walls carve the
-		// SAME interval (a per-plane clamp could diverge and seal the passage). No corner-post margin
-		// is needed: each wall record already overhangs the overlap by >= WallThickness (Edge->Lo =
-		// R.Min - T and [SLo,SHi] is a subset of [R.Min,R.Max]), so an opening flush to SLo/SHi still
-		// leaves a solid pier where the perpendicular walls meet.
-		const float Span = SHi - SLo;
-		const float Weff = FMath::Min(W, Span);
-		const float Center = FMath::Clamp((SLo + SHi) * 0.5f + L.Position,
-			SLo + Weff * 0.5f, SHi - Weff * 0.5f);
-		float OpenLo = Center - Weff * 0.5f;
-		float OpenHi = Center + Weff * 0.5f;
-
-		// Snap the opening interval onto the grid so the jambs land on grid lines (clean nav + modular
-		// assembly): snap both ends to the wall's along-axis cell, keep at least one cell of clear width,
-		// and slide the snapped interval back inside the shared overlap [SLo,SHi]. SLo/SHi are already on
-		// the grid (room faces were snapped), so this stays put for any opening that fits the overlap.
-		{
-			const float GU = (Axis == 0) ? BuiltSnap.Y : BuiltSnap.X; // axis 0 = const-X wall -> slides in Y
-			if (GU > KINDA_SMALL_NUMBER && Span >= GU)
-			{
-				float SnapLo = FMath::GridSnap(OpenLo, GU);
-				float SnapHi = FMath::GridSnap(OpenHi, GU);
-				if (SnapHi - SnapLo < GU) { SnapHi = SnapLo + GU; }
-				if (SnapLo < SLo) { const float D = SLo - SnapLo; SnapLo += D; SnapHi += D; }
-				if (SnapHi > SHi) { const float D = SnapHi - SHi; SnapLo -= D; SnapHi -= D; }
-				SnapLo = FMath::Max(SnapLo, SLo);
-				SnapHi = FMath::Min(SnapHi, SHi);
-				if (SnapHi - SnapLo >= GU * 0.5f) { OpenLo = SnapLo; OpenHi = SnapHi; }
-			}
-		}
-
-		auto CarveInto = [&](float Plane)
-		{
-			FDraftDeskEdgeRec* Edge = nullptr;
-			float Best = 3.f; // pick the CLOSEST wall to this plane so two near-coincident walls aren't confused
-			for (auto& KV : Ledger)
-			{
-				FDraftDeskEdgeRec& E = KV.Value;
-				if (E.Axis != Axis) { continue; }
-				if (E.Hi <= SLo || E.Lo >= SHi) { continue; }
-				const float D = FMath::Abs(E.Plane - Plane);
-				if (D < Best) { Best = D; Edge = &E; }
-			}
-			if (!Edge) { return; } // no wall on this side (open edge) -> already a passage
-
-			FDraftDeskOpening O;
-			O.Lo = OpenLo;
-			O.Hi = OpenHi;
-			if (bWindow && !Edge->bRail)
-			{
-				O.SillZ = L.Sill > 0.f ? L.Sill : M.HalfWallHeight;
-				const float Clear = L.Height > 0.f ? L.Height : M.WindowClearHeight;
-				O.Height = O.SillZ + Clear;
-				O.bFullClear = false;
-			}
-			else
-			{
-				O.Height = L.Height > 0.f ? L.Height : M.DoorHeight;
-				O.bFullClear = (L.Kind != EDraftDeskLinkKind::Doorway);
-			}
-			// snap the opening top (and a window's sill) onto the vertical grid; the lintel/sill clamp
-			// below is the final guard, so this can never push the opening through the wall top.
-			if (BuiltSnap.Z > KINDA_SMALL_NUMBER)
-			{
-				O.Height = FMath::GridSnap(O.Height, BuiltSnap.Z);
-				if (O.SillZ > 0.f) { O.SillZ = FMath::GridSnap(O.SillZ, BuiltSnap.Z); }
-			}
-			if (!O.bFullClear) // keep a lintel so the opening never cuts through the wall top
-			{
-				O.Height = FMath::Min(O.Height, Edge->WallH - 40.f);
-				O.Height = FMath::Max(O.Height, O.SillZ + 40.f);
-			}
-			Edge->Openings.Add(O);
-		};
-
-		CarveInto(PlaneA);
-		CarveInto(PlaneB); // always carve the far wall too; a same-wall duplicate opening merges harmlessly
-	}
-}
-
-void ADraftDeskGenerator::EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskMetrics& M)
-{
-	const float T = BuiltWallT;
-
-	auto Solid = [&](float ULo, float UHi, float ZLo, float ZHi)
-	{
-		const float Len = UHi - ULo;
-		const float H = ZHi - ZLo;
-		if (Len <= 1.f || H <= 1.f)
-		{
-			return;
-		}
-		const FVector C = (E.Axis == 0)
-			? FVector(E.Plane, (ULo + UHi) * 0.5f, (ZLo + ZHi) * 0.5f)
-			: FVector((ULo + UHi) * 0.5f, E.Plane, (ZLo + ZHi) * 0.5f);
-		const FVector S = (E.Axis == 0) ? FVector(T, Len, H) : FVector(Len, T, H);
-		AddBox(C, S);
-	};
-
-	// A proud frame box (thicker than the wall) for door / window jambs + header.
-	auto Frame = [&](float ULo, float UHi, float ZLo, float ZHi)
-	{
-		const float Len = UHi - ULo;
-		const float H = ZHi - ZLo;
-		if (Len <= 1.f || H <= 1.f)
-		{
-			return;
-		}
-		const float Depth = T + 24.f;
-		const FVector C = (E.Axis == 0)
-			? FVector(E.Plane, (ULo + UHi) * 0.5f, (ZLo + ZHi) * 0.5f)
-			: FVector((ULo + UHi) * 0.5f, E.Plane, (ZLo + ZHi) * 0.5f);
-		const FVector S = (E.Axis == 0) ? FVector(Depth, Len, H) : FVector(Len, Depth, H);
-		AddBox(C, S);
-	};
-
-	// A rail is just a short wall (height = HalfWallHeight, no lintels); it still honors openings.
-	const float Top = E.bRail ? (E.BaseZ + M.HalfWallHeight) : (E.BaseZ + E.WallH);
-
-	// sort + merge openings on this plane
-	TArray<FDraftDeskOpening> Ops = E.Openings;
-	Ops.Sort([](const FDraftDeskOpening& X, const FDraftDeskOpening& Y) { return X.Lo < Y.Lo; });
-
-	TArray<FDraftDeskOpening> Merged;
-	for (const FDraftDeskOpening& O : Ops)
-	{
-		if (Merged.Num() > 0 && O.Lo <= Merged.Last().Hi)
-		{
-			Merged.Last().Hi = FMath::Max(Merged.Last().Hi, O.Hi);
-			Merged.Last().Height = FMath::Max(Merged.Last().Height, O.Height);
-			Merged.Last().SillZ = FMath::Max(Merged.Last().SillZ, O.SillZ); // keep any window's sill
-			Merged.Last().bFullClear = Merged.Last().bFullClear || O.bFullClear;
-		}
-		else
-		{
-			Merged.Add(O);
-		}
-	}
-
-	float Cursor = E.Lo;
-	for (const FDraftDeskOpening& O : Merged)
-	{
-		const float OL = FMath::Clamp(O.Lo, E.Lo, E.Hi);
-		const float OR = FMath::Clamp(O.Hi, E.Lo, E.Hi);
-		Solid(Cursor, OL, E.BaseZ, Top); // pier before the opening
-		if (O.SillZ > 1.f)
-		{
-			Solid(OL, OR, E.BaseZ, E.BaseZ + O.SillZ); // sill band below a window
-		}
-		if (!E.bRail && !O.bFullClear)
-		{
-			Solid(OL, OR, E.BaseZ + O.Height, Top); // lintel above a doorway / window
-			// frame it: jambs straddling the opening edges + a header beam, proud of the wall
-			const float DT = E.BaseZ + O.Height;   // head height
-			const float JB = E.BaseZ + O.SillZ;    // foot (sill for a window, floor for a door)
-			const float JW = 18.f, HH = 18.f;
-			Frame(OL - JW * 0.5f, OL + JW * 0.5f, JB, DT + HH);
-			Frame(OR - JW * 0.5f, OR + JW * 0.5f, JB, DT + HH);
-			Frame(OL - JW * 0.5f, OR + JW * 0.5f, DT, DT + HH);
-		}
-		Cursor = FMath::Max(Cursor, OR);
-	}
-	Solid(Cursor, E.Hi, E.BaseZ, Top); // final pier
-}
-
-void ADraftDeskGenerator::EmitStairFlight(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M)
-{
-	const float DZ = J.Z1 - J.Z0;
+	const float DZ = Z1 - Z0;
 	if (DZ <= 1.f)
 	{
 		return;
 	}
 	const int32 N = StepCount(DZ, M);
-	const float R = DZ / N; // effective rise per step (<= StepRise); keeps treads even and the top flush
+	const float R = DZ / N; // effective rise per step (<= StepRise); keeps treads even, top flush
 
 	for (int32 K = 0; K < N; ++K)
 	{
 		const float H = (K + 1) * R; // solid box from the lower floor up to this tread's top
-		const float UC = J.StartU + J.Dir * (K + 0.5f) * M.StepRun;
-		const FVector C = J.bAlongX
-			? FVector(UC, J.CrossV, J.Z0 + H * 0.5f)
-			: FVector(J.CrossV, UC, J.Z0 + H * 0.5f);
-		const FVector S = J.bAlongX
-			? FVector(M.StepRun, J.W, H)
-			: FVector(J.W, M.StepRun, H);
+		const float UC = StartU + Dir * (K + 0.5f) * M.StepRun;
+		const FVector C = bAlongX
+			? FVector(UC, CrossV, Z0 + H * 0.5f)
+			: FVector(CrossV, UC, Z0 + H * 0.5f);
+		const FVector S = bAlongX
+			? FVector(M.StepRun, W, H)
+			: FVector(W, M.StepRun, H);
 		AddBox(C, S);
 	}
 }
 
-void ADraftDeskGenerator::EmitRamp(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M)
+void ADraftDeskGenerator::EmitRamp(bool bAlongX, float StartU, int32 Dir, float CrossV, float Z0, float Z1, float W, const FDraftDeskMetrics& M)
 {
 	const float T = BuiltWallT;
-	const float DZ = J.Z1 - J.Z0;
+	const float DZ = Z1 - Z0;
 	if (DZ <= 1.f)
 	{
 		return;
@@ -992,29 +577,28 @@ void ADraftDeskGenerator::EmitRamp(const FDraftDeskStairJob& J, const FDraftDesk
 	const float TanA = FMath::Tan(FMath::DegreesToRadians(AngleDeg));
 	const float Run = (TanA > KINDA_SMALL_NUMBER) ? DZ / TanA : DZ;
 	const float L = FMath::Sqrt(DZ * DZ + Run * Run);
-	const float UMid = J.StartU + J.Dir * Run * 0.5f;
+	const float UMid = StartU + Dir * Run * 0.5f;
 
-	const FVector C = J.bAlongX
-		? FVector(UMid, J.CrossV, J.Z0 + DZ * 0.5f)
-		: FVector(J.CrossV, UMid, J.Z0 + DZ * 0.5f);
-	const FVector S = J.bAlongX ? FVector(L, J.W, T) : FVector(J.W, L, T);
+	const FVector C = bAlongX
+		? FVector(UMid, CrossV, Z0 + DZ * 0.5f)
+		: FVector(CrossV, UMid, Z0 + DZ * 0.5f);
+	const FVector S = bAlongX ? FVector(L, W, T) : FVector(W, L, T);
 
 	FRotator Rot = FRotator::ZeroRotator;
-	if (J.bAlongX) { Rot.Pitch = -AngleDeg * J.Dir; }
-	else { Rot.Roll = AngleDeg * J.Dir; }
+	if (bAlongX) { Rot.Pitch = -AngleDeg * Dir; }
+	else { Rot.Roll = AngleDeg * Dir; }
 	AddRotatedBox(C, S, Rot);
 }
 
-void ADraftDeskGenerator::EmitColumns(const FDraftDeskRoom& R, const FDraftDeskMetrics& M)
+void ADraftDeskGenerator::EmitColumns(const FDdRoom& R, float FloorZ, float Height, const FDraftDeskMetrics& M)
 {
-	const float H = EffH(R, M);
 	const float ColsX[3] = { R.Min.X + R.W() * 0.28f, R.CX(), R.Min.X + R.W() * 0.72f };
 	const float RowsY[2] = { R.CY() - R.D() * 0.3f, R.CY() + R.D() * 0.3f };
 	for (float Cx : ColsX)
 	{
 		for (float Cy : RowsY)
 		{
-			AddColumn(Cx, Cy, R.FloorZ, H, ColumnDiameter);
+			AddColumn(Cx, Cy, FloorZ, Height, ColumnDiameter);
 		}
 	}
 }
@@ -1026,9 +610,9 @@ void ADraftDeskGenerator::Rebuild()
 	if (Blocks)  { Blocks->ClearInstances();  Blocks->SetMaterial(0, GridMaterial); }
 	if (Columns) { Columns->ClearInstances(); Columns->SetMaterial(0, GridMaterial); }
 
+	Levels.Reset();
 	Rooms.Reset();
-	Links.Reset();
-	StairQueue.Reset();
+	Thresholds.Reset();
 	ExtraBoxes.Reset();
 
 	if (!Spec)
@@ -1037,52 +621,117 @@ void ADraftDeskGenerator::Rebuild()
 	}
 	const FDraftDeskMetrics& M = Spec->Metrics;
 
-	// Per-build grid: blocking snaps to GridSnap, and WallThickness rounds UP to a whole XY cell so two
-	// abutting room faces (each snapped to the grid) stay exactly one wall-gap apart — that is what keeps
-	// their wall planes coincident and lets the edge ledger dedup them to a single shared wall. Computed
-	// before BuildPreset so the presets place their abutment gaps with the same effective thickness.
+	// Per-build grid + wall thickness (unchanged rule): WallThickness rounds UP to a whole XY cell so
+	// abutting room faces stay one wall-gap apart and share a plane bucket.
 	BuiltSnap = M.GridSnap;
-	{
-		const float GridXY = (BuiltSnap.X > KINDA_SMALL_NUMBER && BuiltSnap.Y > KINDA_SMALL_NUMBER)
-			? FMath::Min(BuiltSnap.X, BuiltSnap.Y)
-			: FMath::Max(BuiltSnap.X, BuiltSnap.Y); // 0 only if both axes disable snap
-		BuiltWallT = (GridXY > KINDA_SMALL_NUMBER)
-			? FMath::Max(GridXY, FMath::CeilToFloat(WallThickness / GridXY) * GridXY)
-			: WallThickness;
-	}
+	const float GridXY = (BuiltSnap.X > KINDA_SMALL_NUMBER && BuiltSnap.Y > KINDA_SMALL_NUMBER)
+		? FMath::Min(BuiltSnap.X, BuiltSnap.Y)
+		: FMath::Max(BuiltSnap.X, BuiltSnap.Y);
+	BuiltWallT = (GridXY > KINDA_SMALL_NUMBER)
+		? FMath::Max(GridXY, FMath::CeilToFloat(WallThickness / GridXY) * GridXY)
+		: WallThickness;
 
 	BuildPreset(M);
-	if (Rooms.Num() == 0 && StairQueue.Num() == 0 && ExtraBoxes.Num() == 0)
+	if (Rooms.Num() == 0 && ExtraBoxes.Num() == 0)
 	{
 		return;
 	}
 	NormalizeToEntry(M);
 	SnapLayoutToGrid(M);
 
-	EmitFloorsAndCeilings(M);
+	// --- convert reflected structs into the portable watertight core ---
+	dd::Metrics dm;
+	dm.grid = GridXY > KINDA_SMALL_NUMBER ? GridXY : 0.0;
+	dm.wall_thickness = WallThickness;
+	dm.door_width = M.DoorWidth;
+	dm.door_height = M.DoorHeight;
+	dm.corridor_width = M.CorridorWidth;
+	dm.ceiling_min = M.CeilingMin;
+	dm.half_wall = M.HalfWallHeight;
+	dm.window_clear = M.WindowClearHeight;
+	dm.window_sill = M.HalfWallHeight;
+	dm.step_rise = M.StepRise;
+	dm.step_run = M.StepRun;
+	dm.max_step_angle = M.MaxStepTraversalAngle;
 
-	TMap<FString, FDraftDeskEdgeRec> Ledger;
-	BuildEdgeLedger(Ledger, M);
-	CarveOpenings(Ledger, M);
-	for (auto& KV : Ledger)
+	std::vector<dd::Level> dlevels;
+	for (const FDdLevel& L : Levels)
 	{
-		EmitWall(KV.Value, M);
+		dlevels.emplace_back(L.Index, L.BaseZ, L.Height > 0.f ? L.Height : M.CeilingMin,
+			L.SlabT > 0.f ? L.SlabT : BuiltWallT);
+	}
+	std::vector<dd::Room> drooms;
+	for (const FDdRoom& R : Rooms)
+	{
+		dd::Room r(R.Min.X, R.Min.Y, R.Max.X, R.Max.Y);
+		r.level = R.Level;
+		if (R.FloorZ >= 0.f) { r.has_floor_z = true; r.floor_z = R.FloorZ; }
+		r.height = R.Height;
+		r.floor = R.bFloor;
+		r.ceil = R.bCeil;
+		drooms.push_back(r);
+	}
+	std::vector<dd::Threshold> dthr;
+	for (const FDdThreshold& Th : Thresholds)
+	{
+		dd::Threshold t(Th.RoomA, Th.RoomB, static_cast<dd::Kind>(static_cast<uint8>(Th.Kind)));
+		t.plane = (Th.Plane == EDdPlaneClass::Horizontal) ? dd::HORIZONTAL : dd::VERTICAL;
+		t.position = Th.Position; t.position2 = Th.Position2;
+		t.width = Th.Width; t.depth = Th.Depth; t.height = Th.Height; t.sill = Th.Sill;
+		t.is_entry = Th.bIsEntry; t.bRamp = Th.bRamp;
+		t.edge = static_cast<int>(Th.ExteriorEdge);
+		dthr.push_back(t);
 	}
 
-	for (const FDraftDeskStairJob& J : StairQueue)
+	dd::Shell Shell(std::move(drooms), std::move(dthr), std::move(dlevels), dm);
+	Shell.build();
+	const std::vector<std::string> Fails = Shell.validate();
+
+	// Validator policy (owner decision): loud-warn-but-EMIT in the editor so an author mid-edit is
+	// never blocked from seeing partial geometry. Hard-fail lives in the Phase-0 pure-data tests.
+	for (const std::string& W : Shell.warnings)
 	{
-		if (J.bRamp) { EmitRamp(J, M); }
-		else { EmitStairFlight(J, M); }
+		UE_LOG(LogTemp, Warning, TEXT("draftDesk: %s"), *FString(UTF8_TO_TCHAR(W.c_str())));
+	}
+	for (const std::string& F : Fails)
+	{
+		UE_LOG(LogTemp, Error, TEXT("draftDesk VALIDATOR: %s"), *FString(UTF8_TO_TCHAR(F.c_str())));
 	}
 
-	for (const FDraftDeskRoom& R : Rooms)
+	// walls / floors / ceilings / lintels / sills / piers — all solid output rects, placed by the core
+	for (const dd::Box& B : Shell.emit_boxes())
 	{
-		if (bColumns && R.bColumns)
+		if (B.kind == 2 && !bPlaceCeilings)
 		{
-			EmitColumns(R, M);
+			continue; // hide ceiling/roof-only slabs in the top-down editor view (still validated)
+		}
+		AddBox(FVector(B.cx, B.cy, B.cz), FVector(B.sx, B.sy, B.sz));
+	}
+
+	// stair / ramp flights (the fill of each carved well)
+	for (const dd::Flight& Fl : Shell.flights)
+	{
+		if (Fl.ramp)
+		{
+			EmitRamp(Fl.along_x, Fl.start_u, Fl.dir, Fl.cross_v, Fl.z0, Fl.z1, Fl.w, M);
+		}
+		else
+		{
+			EmitStairFlight(Fl.along_x, Fl.start_u, Fl.dir, Fl.cross_v, Fl.z0, Fl.z1, Fl.w, M);
 		}
 	}
 
+	// columns (per room that opts in) — floor + height come from the reconciled core
+	for (int32 i = 0; i < Rooms.Num(); ++i)
+	{
+		if (bColumns && Rooms[i].bColumns)
+		{
+			const std::pair<double, double> E = Shell.eff(i);
+			EmitColumns(Rooms[i], static_cast<float>(E.first), static_cast<float>(E.second), M);
+		}
+	}
+
+	// decorative solids (dais / cover / pillar / ledge)
 	for (const FDraftDeskBlock& B : ExtraBoxes)
 	{
 		AddBox(B.Center, B.Size);

@@ -84,6 +84,77 @@ static std::string digest(Shell& s) {
     return out;
 }
 
+// ============================================================================ presets
+// Mirror DraftDeskGenerator BuildPreset_* exactly (same coords) and prove each is watertight in the
+// core BEFORE the UE build. Watertightness is translation/grid invariant, so NormalizeToEntry +
+// SnapLayoutToGrid are omitted (preset coords are on-grid; snap is identity).
+struct Layout { std::vector<Room> rooms; std::vector<Threshold> thr; std::vector<Level> lv; };
+
+static const double PC = 1200, PCW = 200, PT = 50, PCM = 300, PFD = 350, PHL = 1000;
+static std::vector<Level> stacked(int n) {
+    double storey = std::max(PCM, PFD - PT); std::vector<Level> v;
+    for (int k = 0; k < n; ++k) v.push_back(Level(k, k * (storey + PT), storey, PT));
+    return v;
+}
+static std::vector<Level> flat1() { return {Level(0, 0, PCM, PT)}; }
+
+static Layout preset_RoomHallRoom() {
+    double ED = PC*0.5, MD = PC, Cx0 = ED+PT+PHL+PT; Layout L; L.lv = flat1();
+    L.rooms = {Room(0,-ED*0.5,ED,ED*0.5), Room(ED+PT,-PCW*0.5,ED+PT+PHL,PCW*0.5), Room(Cx0,-MD*0.5,Cx0+MD,MD*0.5)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(0,1,Doorway), Threshold(1,2,Doorway)};
+    return L;
+}
+static Layout preset_SingleRoom() { Layout L; L.lv = flat1();
+    L.rooms = {Room(0,-PC*0.5,PC,PC*0.5)}; L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry()}; return L; }
+static Layout preset_Corridor() { Layout L; L.lv = flat1();
+    L.rooms = {Room(0,-PCW*0.5,3*PC,PCW*0.5)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(0,-1,Doorway).eg(EAST)}; return L; }
+static Layout preset_LBend() { Layout L; L.lv = flat1();
+    L.rooms = {Room(0,-PCW*0.5,2*PC,PCW*0.5), Room(2*PC+PT,-PCW*0.5,2*PC+PT+PCW,PCW*0.5),
+               Room(2*PC+PT,PCW*0.5+PT,2*PC+PT+PCW,PCW*0.5+PT+2*PC)};
+    L.thr = {Threshold(0,1,Passage), Threshold(1,2,Passage), Threshold(0,-1,Doorway).eg(WEST).entry(),
+             Threshold(2,-1,Doorway).eg(NORTH)}; return L; }
+static Layout preset_TJunction() { Layout L; L.lv = flat1();
+    L.rooms = {Room(0,-PCW*0.5,3*PC,PCW*0.5), Room(1.5*PC-PCW*0.5,PCW*0.5+PT,1.5*PC+PCW*0.5,PCW*0.5+PT+2*PC)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(0,-1,Doorway).eg(EAST),
+             Threshold(1,-1,Doorway).eg(NORTH), Threshold(0,1,Passage)}; return L; }
+static Layout preset_Cross() { Layout L; L.lv = flat1(); double Hh = PCW*0.5, Nx0 = 2*PC+PT, Ex0 = Nx0+PCW+PT;
+    L.rooms = {Room(0,-Hh,2*PC,Hh), Room(Nx0,-Hh,Nx0+PCW,Hh), Room(Ex0,-Hh,Ex0+2*PC,Hh),
+               Room(Nx0,-Hh-PT-2*PC,Nx0+PCW,-Hh-PT), Room(Nx0,Hh+PT,Nx0+PCW,Hh+PT+2*PC)};
+    L.thr = {Threshold(0,1,Passage), Threshold(1,2,Passage), Threshold(3,1,Passage), Threshold(1,4,Passage),
+             Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(2,-1,Doorway).eg(EAST),
+             Threshold(3,-1,Doorway).eg(SOUTH), Threshold(4,-1,Doorway).eg(NORTH)}; return L; }
+static Layout preset_Grid2x2() { Layout L; L.lv = flat1();
+    L.rooms = {Room(0,-PC,PC,0), Room(PC+PT,-PC,2*PC+PT,0), Room(0,PT,PC,PC+PT), Room(PC+PT,PT,2*PC+PT,PC+PT)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(0,1,Doorway), Threshold(2,3,Doorway),
+             Threshold(0,2,Doorway), Threshold(1,3,Doorway)}; return L; }
+static Layout preset_SplitLevel() { Layout L; L.lv = stacked(2);
+    L.rooms = {Room(0,-PC*0.5,PC,PC*0.5).lvl(0), Room(0,-PC*0.5,PC,PC*0.5).lvl(1)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(0,1,Stairwell).pln(HORIZONTAL).w(PCW)}; return L; }
+static Layout preset_Tower() { Layout L; L.lv = stacked(3);
+    L.rooms = {Room(0,-PC*0.5,PC,PC*0.5).lvl(0), Room(0,-PC*0.5,PC,PC*0.5).lvl(1), Room(0,-PC*0.5,PC,PC*0.5).lvl(2)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(),
+             Threshold(0,1,Stairwell).pln(HORIZONTAL).w(PCW).pos2(PC*0.25),
+             Threshold(1,2,Stairwell).pln(HORIZONTAL).w(PCW).pos2(-PC*0.25)}; return L; }
+static Layout preset_Ramp() { Layout L; L.lv = stacked(2);
+    L.rooms = {Room(0,-PC*0.5,PC,PC*0.5).lvl(0), Room(0,-PC*0.5,PC,PC*0.5).lvl(1)};
+    L.thr = {Threshold(0,-1,Doorway).eg(WEST).entry(), Threshold(0,1,Ramp).pln(HORIZONTAL).w(PCW).ramp()}; return L; }
+static Layout preset_Mezzanine() { Layout L; L.lv = stacked(2);
+    double storey = std::max(PCM, PFD - PT), TallH = 2*storey + PT, MezX0 = 1.4*PC;
+    double VoidW = MezX0, VoidPos = -(2*PC - VoidW)*0.5;
+    L.rooms = {Room(0,-PC,2*PC,PC).lvl(0).h(TallH), Room(MezX0,-PC,2*PC,PC).lvl(1)};
+    L.rooms[1].ceil = false;
+    L.thr = {Threshold(0,-1,Atrium).pln(HORIZONTAL).w(VoidW).d(2*PC).pos(VoidPos),
+             Threshold(1,-1,Rail).eg(WEST), Threshold(0,-1,Doorway).eg(WEST).entry(),
+             Threshold(0,1,Stairwell).pln(HORIZONTAL).w(PCW)}; return L; }
+
+static void validate_preset(const std::string& name, Layout L) {
+    Shell s(std::move(L.rooms), std::move(L.thr), std::move(L.lv), M()); s.build();
+    auto fails = s.validate();
+    bool ok = fails.empty() && s.warnings.empty();
+    report(name, ok, fails, s.warnings.empty() ? "" : (std::to_string(s.warnings.size()) + " warnings: " + (s.warnings.empty() ? "" : s.warnings[0])));
+}
+
 // ============================================================================ castle
 static Shell build_castle() {
     const double T = 50, CW = 400;
@@ -209,7 +280,10 @@ int main(int argc, char** argv) {
     case_prop("V2 stairwell floor-opening",
         {Room(0,0,1000,600).lvl(0), Room(0,0,1000,600).lvl(1)},
         {Threshold(0,1,Stairwell).pln(HORIZONTAL).w(200).pos(-200)}, LV2(), M(),
-        [](Shell& s){ auto b = s.bucket(SL(1)); return has_ap_kind(b, Stairwell) && area(b->solid) > 0; }, "hole carved, floor remains");
+        [](Shell& s){ auto b = s.bucket(SL(1));
+            return has_ap_kind(b, Stairwell) && area(b->solid) > 0
+                && s.flights.size() == 1 && s.flights[0].z0 == 0 && s.flights[0].z1 == 350; },
+        "hole carved, floor remains, one flight 0->350");
     case_prop("V3 atrium (mid-void + 2 galleries)",
         {Room(0,0,1500,600).lvl(0).h(650), Room(0,0,450,600).lvl(1), Room(1050,0,1500,600).lvl(1)},
         {Threshold(0,-1,Atrium).pln(HORIZONTAL).w(500).d(600), Threshold(1,-1,Rail).eg(EAST), Threshold(2,-1,Rail).eg(WEST)},
@@ -279,6 +353,20 @@ int main(int argc, char** argv) {
     case_unresolved("ADV4 bad threshold index -> loud, no crash",
         {Room(0,0,400,400)}, {Threshold(0,5,Doorway)}, none(), M(), 0);
 
+    // ---- presets (mirror the generator; prove each watertight before the UE build) ----
+    std::printf("\n--- PRESETS ---\n");
+    validate_preset("RoomHallRoom", preset_RoomHallRoom());
+    validate_preset("SingleRoom", preset_SingleRoom());
+    validate_preset("Corridor", preset_Corridor());
+    validate_preset("LBend", preset_LBend());
+    validate_preset("TJunction", preset_TJunction());
+    validate_preset("Cross", preset_Cross());
+    validate_preset("Grid2x2", preset_Grid2x2());
+    validate_preset("SplitLevel", preset_SplitLevel());
+    validate_preset("Tower", preset_Tower());
+    validate_preset("Ramp", preset_Ramp());
+    validate_preset("Mezzanine", preset_Mezzanine());
+
     // ---- castle ----
     std::printf("\n--- CASTLE ---\n");
     {
@@ -286,6 +374,10 @@ int main(int argc, char** argv) {
         auto fails = s.validate();
         report("Castle Chorrol watertight (0 warn, 0 fail)", fails.empty() && s.warnings.empty(), fails,
                s.warnings.empty() ? "" : (std::to_string(s.warnings.size()) + " warnings"));
+        auto boxes = s.emit_boxes();
+        bool boxes_ok = !boxes.empty();
+        for (auto& b : boxes) if (!(b.sx > 0 && b.sy > 0 && b.sz > 0)) boxes_ok = false;
+        report("emit_boxes: nonempty, all positive size (" + std::to_string(boxes.size()) + " boxes)", boxes_ok, {}, "degenerate box");
     }
 
     std::printf("\n%d/%d pass\n", g_total - g_fail, g_total);
