@@ -77,13 +77,12 @@ L.door(guard, weapons)
 # ---------------------------------------------------------------- balcony + grand double staircase (Level 1)
 bal = L.room(2600, -1000, 3000, 1000, level=1, ceil=False)     # roofless mezzanine, open to the hall above
 L.rail(bal, edge=WEST)                                         # guard rail over the hall drop
-# Two grand staircases climb the back of the hall up to the balcony's front (west) edge, each landing
-# through a 300-wide gap in the rail at y = -/+750. The flights are FILL (solid stepped boxes), not a
-# slab pierce — you walk UP them from the hall floor onto the balcony.
+# Two grand staircases climb the back of the hall up to the balcony's front (west) edge. The flights are
+# FILL (solid stepped boxes), not a slab pierce. The rail gap where each one lands DERIVES from the
+# flight (RailGap-from-flight) — no hand-authored gap to drift out of alignment.
 RUN = total_run(Z)
 for cv in (-750.0, +750.0):
     L.flight(along_x=True, start_u=2600 - RUN, cross_v=cv, from_z=0.0, to_z=Z, width=300)
-    L.exterior(bal, WEST, "Passage", position=cv, width=300)   # rail gap at the landing
 
 # ---------------------------------------------------------------- the wings + royal suite (Level 1)
 side_wing(L, bal, door_y=-600, sign=-1)   # south wing

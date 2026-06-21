@@ -88,6 +88,20 @@ class Threshold:
     name: str = ""
 
 
+@dataclass
+class Flight:
+    """An explicit stair/ramp flight (solid stepped FILL that lands at an edge). The core does NOT
+    emit treads (pure data); it uses the flight only to DERIVE a rail gap where it lands (RailGap-
+    from-flight): the gap tracks the flight's CrossV/width, so it can never drift from the stairs."""
+    along_x: bool = True
+    start_u: float = 0.0
+    cross_v: float = 0.0
+    z0: float = 0.0
+    z1: float = 0.0
+    w: float = 0.0
+    direction: int = 1
+
+
 def step_total_run(dz, m):
     if dz <= 1:
         return 0.0
@@ -113,9 +127,10 @@ class Bucket:
 
 
 class Shell:
-    def __init__(self, rooms, thresholds, levels, metrics):
+    def __init__(self, rooms, thresholds, levels, metrics, flights=None):
         self.rooms = rooms
         self.thresholds = thresholds
+        self.flights = flights or []
         self.metrics = metrics
         self.levels = levels or self._infer_levels()
         self.buckets = {}
@@ -441,8 +456,43 @@ class Shell:
             self.output[key] = b.solid
 
     def build(self):
-        self.pass0(); self.pass1(); self.pass2(); self.emit()
+        self.pass0(); self.pass1(); self.pass2(); self.rail_gaps_from_flights(); self.emit()
         return self
+
+    def rail_gaps_from_flights(self):
+        """RailGap-from-flight: where an explicit flight lands at a RAILED edge, carve a gap in that
+        rail at the flight's CrossV (width = flight width). The gap derives from the flight, so it can
+        never drift from where the stairs actually arrive (no hand-authored, decouple-able gaps)."""
+        m = self.metrics; T = m.T
+        for f in self.flights:
+            run = step_total_run(abs(f.z1 - f.z0), m)
+            u_top = f.start_u + f.direction * run          # where the top tread lands
+            cross = f.cross_v
+            for idx, r in enumerate(self.rooms):
+                if r.W() <= 1 or r.D() <= 1:
+                    continue
+                fz, H = self.eff(idx)
+                if abs(fz - f.z1) > 1:                      # the room the flight lands ON
+                    continue
+                if f.along_x:
+                    if f.direction > 0 and abs(r.x0 - u_top) <= T + 1 and r.y0 <= cross <= r.y1:
+                        cls, plane, edge = CLASS_X, r.x0 - T / 2, WEST
+                    elif f.direction < 0 and abs(r.x1 - u_top) <= T + 1 and r.y0 <= cross <= r.y1:
+                        cls, plane, edge = CLASS_X, r.x1 + T / 2, EAST
+                    else:
+                        continue
+                else:
+                    if f.direction > 0 and abs(r.y0 - u_top) <= T + 1 and r.x0 <= cross <= r.x1:
+                        cls, plane, edge = CLASS_Y, r.y0 - T / 2, SOUTH
+                    elif f.direction < 0 and abs(r.y1 - u_top) <= T + 1 and r.x0 <= cross <= r.x1:
+                        cls, plane, edge = CLASS_Y, r.y1 + T / 2, NORTH
+                    else:
+                        continue
+                if edge not in self._rail_edges(idx):       # only notch an actual rail
+                    continue
+                w = f.w if f.w > 0 else m.corridor_width
+                self.wall_bucket(cls, plane).apertures.append((cross - w / 2, cross + w / 2, fz, fz + H, PASSAGE, -1))
+                break
 
     # ----------------------------------------------------------------- validation
     def validate(self):
@@ -515,7 +565,7 @@ def a_level(shell, idx):
     return shell.rooms[idx].level
 
 
-def build_and_validate(rooms, thresholds, levels=None, metrics=None):
-    s = Shell(rooms, thresholds, levels, metrics or Metrics())
+def build_and_validate(rooms, thresholds, levels=None, metrics=None, flights=None):
+    s = Shell(rooms, thresholds, levels, metrics or Metrics(), flights)
     s.build()
     return s, s.validate()

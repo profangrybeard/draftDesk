@@ -691,7 +691,15 @@ void ADraftDeskGenerator::Rebuild()
 		dthr.push_back(t);
 	}
 
-	dd::Shell Shell(std::move(drooms), std::move(dthr), std::move(dlevels), dm);
+	// explicit flights are passed to the core so it can DERIVE rail gaps where they land (the generator
+	// still renders the treads below via EmitStairFlight). One flight drives both the gap and the steps.
+	std::vector<dd::Flight> dflights;
+	for (const FDdFlight& F : Flights)
+	{
+		dflights.push_back({F.bAlongX, F.StartU, F.CrossV, F.Width, F.FromZ, F.ToZ, F.Dir, F.bRamp, -1});
+	}
+
+	dd::Shell Shell(std::move(drooms), std::move(dthr), std::move(dlevels), dm, std::move(dflights));
 	Shell.build();
 	const std::vector<std::string> Fails = Shell.validate();
 

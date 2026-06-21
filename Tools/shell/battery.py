@@ -5,7 +5,7 @@ assertions pass (watertight by construction) plus a case-specific structural pro
 Cases that SHOULD fail loud (V9 desync, V12 unresolvable) are marked expect_fail/expect_unresolved.
 Run: python battery.py
 """
-from shell import (Room, Threshold, Level, Metrics, build_and_validate,
+from shell import (Room, Threshold, Level, Flight, Metrics, build_and_validate,
                    DOORWAY, PASSAGE, WINDOW, RAIL, STAIRWELL, HATCH, ATRIUM,
                    VERTICAL, HORIZONTAL, WEST, EAST, SOUTH, NORTH, CLASS_X, CLASS_Y, CLASS_SLAB)
 import rects2d as R
@@ -15,8 +15,8 @@ M = Metrics(grid=50, wall_thickness=30)        # T = 50
 
 
 def case(name, rooms, thr, levels=None, metrics=None, prop=None, prop_name="",
-         expect_fail=None, expect_unresolved=None):
-    s, fails = build_and_validate(rooms, thr, levels, metrics or M)
+         expect_fail=None, expect_unresolved=None, flights=None):
+    s, fails = build_and_validate(rooms, thr, levels, metrics or M, flights)
     if expect_fail is not None:
         ok = any(expect_fail in f for f in fails)
         RESULTS.append((name, ok, [] if ok else (fails or ["(no failure raised)"]), f"expected fail ~ {expect_fail!r}"))
@@ -212,6 +212,22 @@ case("V10 off-grid stair landing rounds OUT",
      [Room(0, 0, 1200, 800, level=0), Room(0, 0, 1200, 800, level=1)],
      [Threshold(0, 1, STAIRWELL, plane=HORIZONTAL, width=200)], levels=LV_OG, metrics=M2,
      prop=v10_offgrid, prop_name="well grid-aligned, encloses run, floor beyond solid")
+
+# RailGap-from-flight: a balcony with a WEST rail; a flight climbs +X and lands at its west edge ->
+# the rail is NOTCHED at the flight's CrossV (gap), with a pier flanking it. The gap DERIVES from the
+# flight, so it can never drift from where the stairs arrive.
+def v11_gap(s):
+    b = s.buckets.get((CLASS_X, -25))                              # balcony WEST wall (x0=0 -> plane -25)
+    if not b:
+        return False
+    gap = R.area_within(b.solid, (100, 300, 350, 450)) == 0        # notch at cross 200 (y[100,300]), rail z[350,450]
+    pier = R.area_within(b.solid, (-50, 100, 350, 450)) > 0        # rail survives beside the gap
+    return gap and pier
+case("V11 rail gap derives from flight",
+     [Room(0, 0, 400, 400, level=1)], [Threshold(0, -1, RAIL, edge=WEST)],
+     levels=[Level(0, 0, 300, 50), Level(1, 350, 300, 50)],
+     flights=[Flight(along_x=True, start_u=-600, cross_v=200, z0=0, z1=350, w=200, direction=1)],
+     prop=v11_gap, prop_name="WEST rail notched at the flight landing")
 
 
 # ===================================================================== ADVERSARIAL REGRESSIONS

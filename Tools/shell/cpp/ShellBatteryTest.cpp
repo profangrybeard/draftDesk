@@ -26,8 +26,9 @@ using Prop = std::function<bool(Shell&)>;
 static Metrics M() { Metrics m; m.grid = 50; m.wall_thickness = 30; return m; }  // T=50
 
 static void case_prop(const std::string& name, std::vector<Room> rooms, std::vector<Threshold> thr,
-                      std::vector<Level> levels, Metrics m, Prop prop, const std::string& why = "prop") {
-    Shell s(std::move(rooms), std::move(thr), std::move(levels), m); s.build();
+                      std::vector<Level> levels, Metrics m, Prop prop, const std::string& why = "prop",
+                      std::vector<Flight> flights = {}) {
+    Shell s(std::move(rooms), std::move(thr), std::move(levels), m, std::move(flights)); s.build();
     auto fails = s.validate();
     bool extra = prop ? prop(s) : true;
     report(name, fails.empty() && extra, fails, extra ? "" : why);
@@ -334,6 +335,15 @@ int main(int argc, char** argv) {
                 return on_grid && encloses && floor_beyond;
             }, "well grid-aligned, encloses run, floor beyond solid");
     }
+
+    case_prop("V11 rail gap derives from flight",
+        {Room(0,0,400,400).lvl(1)}, {Threshold(0,-1,Rail).eg(WEST)},
+        {Level(0,0,300,50), Level(1,350,300,50)}, M(),
+        [](Shell& s){ auto b = s.bucket(WX(-25)); if (!b) return false;
+            return area_within(b->solid, Rect(100,300,350,450)) == 0      // rail notched at the landing
+                && area_within(b->solid, Rect(-50,100,350,450)) > 0; },    // rail survives beside the gap
+        "WEST rail notched at the flight landing",
+        { Flight{true, -600, 200, 200, 0, 350, 1, false, -1} });           // along_x,start_u,cross_v,w,z0,z1,dir,ramp,thr
 
     std::printf("\n--- ADVERSARIAL REGRESSIONS ---\n");
     case_prop("ADV1 multi-level stairwell pierces every crossed floor",

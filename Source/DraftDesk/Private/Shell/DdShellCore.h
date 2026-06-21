@@ -285,14 +285,47 @@ public:
     std::map<Key, Bucket> buckets;
     std::vector<std::string> errors, warnings;
     std::vector<int> unresolved;
-    std::vector<Flight> flights;
+    std::vector<Flight> flights;       // OUTPUT: flights derived from Stairwell/Ramp thresholds
+    std::vector<Flight> in_flights;    // INPUT: explicit flights, used to derive rail gaps
 
-    Shell(std::vector<Room> r, std::vector<Threshold> t, std::vector<Level> lv, Metrics m)
-        : rooms(std::move(r)), thresholds(std::move(t)), levels(std::move(lv)), metrics(m) {
+    Shell(std::vector<Room> r, std::vector<Threshold> t, std::vector<Level> lv, Metrics m,
+          std::vector<Flight> fin = {})
+        : rooms(std::move(r)), thresholds(std::move(t)), levels(std::move(lv)), metrics(m),
+          in_flights(std::move(fin)) {
         if (levels.empty()) infer_levels();
     }
 
-    Shell& build() { pass0(); pass1(); pass2(); emit(); return *this; }
+    Shell& build() { pass0(); pass1(); pass2(); rail_gaps_from_flights(); emit(); return *this; }
+
+    // RailGap-from-flight: where an explicit flight lands at a RAILED edge, notch the rail at the
+    // flight's CrossV (width = flight width). The gap derives from the flight, never drifting from it.
+    void rail_gaps_from_flights() {
+        const Metrics& m = metrics; double T = m.T();
+        for (const Flight& f : in_flights) {
+            double run = step_total_run(std::fabs(f.z1 - f.z0), m);
+            double u_top = f.start_u + f.dir * run, cross = f.cross_v;
+            for (size_t idx = 0; idx < rooms.size(); ++idx) {
+                const Room& r = rooms[idx];
+                if (r.W() <= 1 || r.D() <= 1) continue;
+                double fz = eff_[idx].first, H = eff_[idx].second;
+                if (std::fabs(fz - f.z1) > 1) continue;
+                int cls, edge; double plane;
+                if (f.along_x) {
+                    if (f.dir > 0 && std::fabs(r.x0 - u_top) <= T + 1 && r.y0 <= cross && cross <= r.y1) { cls = CLASS_X; plane = r.x0 - T/2; edge = WEST; }
+                    else if (f.dir < 0 && std::fabs(r.x1 - u_top) <= T + 1 && r.y0 <= cross && cross <= r.y1) { cls = CLASS_X; plane = r.x1 + T/2; edge = EAST; }
+                    else continue;
+                } else {
+                    if (f.dir > 0 && std::fabs(r.y0 - u_top) <= T + 1 && r.x0 <= cross && cross <= r.x1) { cls = CLASS_Y; plane = r.y0 - T/2; edge = SOUTH; }
+                    else if (f.dir < 0 && std::fabs(r.y1 - u_top) <= T + 1 && r.x0 <= cross && cross <= r.x1) { cls = CLASS_Y; plane = r.y1 + T/2; edge = NORTH; }
+                    else continue;
+                }
+                if (!rail_edges((int)idx).count(edge)) continue;
+                double w = f.w > 0 ? f.w : m.corridor_width;
+                wall_bucket(cls, plane).apertures.push_back({cross - w/2, cross + w/2, fz, fz + H, Passage, -1});
+                break;
+            }
+        }
+    }
 
     const Bucket* bucket(const Key& k) const {
         auto it = buckets.find(k);
