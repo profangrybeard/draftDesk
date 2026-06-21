@@ -19,3 +19,7 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+
+# Standalone C++ shell-core test harness artifacts (Tools/shell/cpp)
+_test.exe
+_test.obj

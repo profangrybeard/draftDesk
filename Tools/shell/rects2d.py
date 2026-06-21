@@ -4,9 +4,17 @@ draftDesk SHELL emitter (Phase 0, pure data, no Unreal).
 
 Given SOLID rects (a plane bucket's deposited faces) and HOLE rects (the bucket's
 apertures), compute  union(solids) MINUS union(holes)  as a set of NON-overlapping,
-gap-free, maximal axis-aligned rectangles, via coordinate-compression sweep + greedy
-maximal-rectangle merge. No tolerance, no closest-wall search, no integer-span
-equality — exact on the grid (SHELL v1 spec, "PASS 3 / IMPLEMENTATION of the 2D Boolean").
+gap-free axis-aligned rectangles, via coordinate-compression sweep + DETERMINISTIC
+strip decomposition. No tolerance, no closest-wall search, no integer-span equality —
+exact on the grid (SHELL v1 spec, "PASS 3 / IMPLEMENTATION of the 2D Boolean").
+
+EMIT POLICY (open-Q5, owner decision 2026-06-21 = strip decomposition over greedy
+maximal-rectangle merge): strip along axis A into columns, emit each column's maximal
+B-runs, then merge consecutive columns that share an identical run signature. Every box
+edge lands on a compressed coordinate, so the output is a PURE FUNCTION of the cell grid
+(deterministic, reproducible — unlike order-dependent greedy) and seams line up across
+the surface and across adjacent pieces (clean modular-kit handoff to GAME356). Costs
+somewhat more boxes than greedy in cross/plus regions; acceptable for a blockout.
 
 A Rect is (alo, ahi, blo, bhi), half-open [lo, hi), with alo < ahi and blo < bhi.
 Axis A is the plane's in-plane axis; axis B is Z (walls) or the 2nd footprint axis (slabs).
@@ -46,33 +54,41 @@ def _cover_grid(rects, A, B):
     return g
 
 
-def _greedy_merge(cell, A, B):
-    """Greedy maximal-rectangle merge of True sub-cells into output rects.
-    Extend along B first, then along A while the whole column band stays solid+unused."""
+def _strip_decompose(cell, A, B):
+    """Deterministic strip decomposition (the emit policy — see module docstring).
+    Strip along axis A into columns; for each column collect its maximal B-runs as a
+    signature; merge consecutive columns whose signatures are IDENTICAL into one
+    box-group; emit one box per run of each group. Every box edge lies on a compressed
+    coordinate. The result is a pure function of the cell grid — order-independent."""
     nA, nB = len(A) - 1, len(B) - 1
-    used = [[False] * nB for _ in range(nA)]
-    out = []
+    sigs = []  # sigs[i] = tuple of (jlo, jhi_excl) maximal solid runs in column i
     for i in range(nA):
-        for j in range(nB):
-            if not cell[i][j] or used[i][j]:
-                continue
-            j2 = j
-            while j2 + 1 < nB and cell[i][j2 + 1] and not used[i][j2 + 1]:
-                j2 += 1
-            i2 = i
-            def band_ok(ii):
-                return all(cell[ii][jj] and not used[ii][jj] for jj in range(j, j2 + 1))
-            while i2 + 1 < nA and band_ok(i2 + 1):
-                i2 += 1
-            for ii in range(i, i2 + 1):
-                for jj in range(j, j2 + 1):
-                    used[ii][jj] = True
-            out.append((A[i], A[i2 + 1], B[j], B[j2 + 1]))
+        col = cell[i]; runs = []; j = 0
+        while j < nB:
+            if col[j]:
+                j0 = j
+                while j < nB and col[j]:
+                    j += 1
+                runs.append((j0, j))
+            else:
+                j += 1
+        sigs.append(tuple(runs))
+    out = []; i = 0
+    while i < nA:
+        sig = sigs[i]
+        if not sig:
+            i += 1; continue
+        i2 = i
+        while i2 + 1 < nA and sigs[i2 + 1] == sig:
+            i2 += 1
+        for (j0, j1) in sig:
+            out.append((A[i], A[i2 + 1], B[j0], B[j1]))
+        i = i2 + 1
     return out
 
 
 def boolean(solids, holes):
-    """union(solids) MINUS union(holes) -> list of maximal non-overlapping rects."""
+    """union(solids) MINUS union(holes) -> deterministic non-overlapping rect partition."""
     solids = [r for r in solids if r[0] < r[1] and r[2] < r[3]]
     holes = [r for r in holes if r[0] < r[1] and r[2] < r[3]]
     if not solids:
@@ -83,7 +99,7 @@ def boolean(solids, holes):
     gs = _cover_grid(solids, A, B)
     gh = _cover_grid(holes, A, B)
     cell = [[gs[i][j] and not gh[i][j] for j in range(nB)] for i in range(nA)]
-    return _greedy_merge(cell, A, B)
+    return _strip_decompose(cell, A, B)
 
 
 def union(rects):

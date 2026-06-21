@@ -74,6 +74,35 @@ closet = Rm(4800, -1250, 5300, -750, level=1, name="closet");    door(bed, close
 levels = [Level(0, 0, 250, 50), Level(1, 300, 300, 50)]
 s, fails = build_and_validate(rooms, thr, levels, Metrics(grid=50, wall_thickness=30))
 
+
+def _keytuple(key):
+    """(cls, tag, a) — tag=1 for a roof slab bucket; matches the C++ Key ordering."""
+    cls, k1 = key[0], key[1]
+    return (cls, 1, k1[1]) if isinstance(k1, tuple) else (cls, 0, k1)
+
+
+def _fmt(v):
+    r = round(v)
+    return str(int(r)) if abs(v - r) < 1e-6 else f"{v:.4f}"
+
+
+def digest(shell):
+    """Canonical bucket digest, byte-identical to ShellBatteryTest.cpp `digest` (parity proof)."""
+    out = []
+    for key in sorted(shell.buckets, key=_keytuple):
+        cls, tag, a = _keytuple(key)
+        line = f"{cls} {a} {tag} :"
+        for r in sorted(shell.buckets[key].solid):
+            line += " (" + ",".join(_fmt(x) for x in r) + ")"
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
+import sys
+if len(sys.argv) > 1 and sys.argv[1] == "digest":
+    sys.stdout.write(digest(s))
+    raise SystemExit(0)
+
 print(f"Castle Chorrol -> SHELL:  {len(rooms)} rooms, {len(thr)} thresholds, 2 levels")
 print(f"loud notices (warnings): {len(s.warnings)}")
 for w in s.warnings:
