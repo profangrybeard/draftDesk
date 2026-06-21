@@ -1,115 +1,152 @@
-"""dd_sync — the marker -> geometry sync (Stage A). The heart of threshold-first authoring:
-the author drags ADraftDeskThreshold markers in the editor, then runs this, and the geometry
-rebuilds around where the markers landed.
+"""dd_sync — marker -> geometry sync. The heart of threshold-first authoring: the author drags
+ADraftDeskThreshold markers, runs this, and the layout updates around where the markers landed,
+rebuilds, and re-runs the nav gate.
 
-  python dd_sync.py            # syncs the example layout (dd_castle)
-  python dd_sync.py my_layout  # syncs a layout module you wrote (my_layout.py at this folder)
+  python dd_sync.py            # sync the example layout (dd_castle)
+  python dd_sync.py my_layout
 
-Per connection (matched to its link by LABEL, never by proximity):
-  * SLIDE   — Position = the along-wall component of (marker - seed); the axis field picks along/perp.
-  * RESIZE  — Width/Height from the marker; a 0 means "unspecified" -> keep the layout/generator default.
-  * DELETE  — interior link -> MERGE (Kind=Open at full shared-wall width, the wall dissolves);
-              entry/exterior link -> REFUSED (deleting it would break the one-entry invariant, R1).
-  * off-wall (perpendicular) drag -> slide along only; perpendicular reshape is Stage B (not built).
-The ENGINE clamps every opening onto the shared wall, so we pass the RAW offset and only REPORT
-which markers sit past the wall (those want a Stage B reshape).
+Per connection (matched to its threshold by LABEL, never proximity):
+  * SLIDE   (Stage A) — Position = the along-wall offset of the dragged marker.
+  * RESIZE  (Stage A) — Width/Height from the marker (0 = keep the layout/generator default).
+  * MERGE   (Stage A) — a deleted interior marker -> Kind=Passage at full width (the wall dissolves);
+            a deleted entry/exterior marker is REFUSED (R1 one-entry invariant).
+  * RESHAPE (Stage B) — a marker dragged PERPENDICULAR off its wall MOVES the wall: both abutting
+            rooms' facing edges follow it (shared-face-follows-both), keeping the one-cell gap. Gated:
+            the move is reverted if FaceConnection no longer resolves a positive overlap or a room goes
+            degenerate. Geometry is re-applied and the NAV gate re-runs, so a reshape only sticks if the
+            layout stays watertight + walkable.
 """
 import importlib
 import json
-import os
 import sys
 
 import ddrun
 import dd_config as C
+import dd_anchor
+import dd_navcheck
+from dd_navcheck import _shift
 
 layout_mod = sys.argv[1] if len(sys.argv) > 1 else "dd_castle"
 L = importlib.import_module(layout_mod).L
-seed = L.threshold_points()
+seeds = dd_anchor.seeds(L)
+dx, dy, _ = _shift(L)
+T = L.wall
+GRID = float(getattr(L, "snap", 50.0) or 50.0)
 
-markers = ddrun.run("sandbox/read_markers.py")["markers"]
+
+def snap(v):
+    return round(v / GRID) * GRID if GRID > 0 else v
+
+
+# --- read the placed markers: label + world transform + Kind/Width/Height ---
+READ = '''import json
+FIND = "editor_toolset.toolsets.scene.SceneTools.find_actors"
+XF = "editor_toolset.toolsets.actor.ActorTools.get_actor_transform"
+GET = "editor_toolset.toolsets.object.ObjectTools.get_properties"
+CLS = "{{THRESH}}"
+def run():
+    acts = execute_tool(FIND, json.dumps({"name": "", "tag": "", "collision_channels": [],
+        "actor_type": {"refPath": CLS}}))["returnValue"]
+    out = []
+    for a in acts:
+        ref = a["refPath"]
+        xf = execute_tool(XF, json.dumps({"actor": {"refPath": ref}}))["returnValue"]
+        pr = execute_tool(GET, json.dumps({"instance": {"refPath": ref},
+            "properties": ["Label", "Kind", "Width", "Height"]}))["returnValue"]
+        pj = json.loads(pr) if isinstance(pr, str) else pr
+        out.append({"label": pj["Label"] if "Label" in pj else "",
+                    "x": xf["location"]["x"], "y": xf["location"]["y"], "z": xf["location"]["z"],
+                    "kind": pj["Kind"] if "Kind" in pj else "",
+                    "width": pj["Width"] if "Width" in pj else 0,
+                    "height": pj["Height"] if "Height" in pj else 0})
+    return {"markers": out}
+'''
+markers = ddrun.run_text(READ)["markers"]
 mby = {m["label"]: m for m in markers}
 
-# Effective opening sizes for the "past wall" report: a 0 width means "use the generator default",
-# so size the door by that default, not by 0. Live values read from the Spec; fall back to defaults.
-META = {"doorWidth": 240.0, "doorHeight": 200.0, "corridorWidth": 200.0}
-# The blocking grid: prefer the live Spec value, else the layout's own snap, else 50. Markers should be
-# dragged onto this grid; whatever they land on, we round to it (precision, not artistic control).
-GX = GY = GZ = float(getattr(L, "snap", 50.0) or 50.0)
-try:
-    d = ddrun.run("sandbox/read_door.py")
-    for k in ("doorWidth", "doorHeight", "corridorWidth"):
-        if d.get(k):
-            META[k] = d[k]
-    g = d.get("gridSnap")
-    if isinstance(g, dict):
-        GX, GY, GZ = float(g.get("x") or GX), float(g.get("y") or GY), float(g.get("z") or GZ)
-except Exception:
-    pass
+
+def reshape(seed, perp):
+    """Move the shared wall by `perp` (both rooms' facing edges follow). Returns True if it holds."""
+    t = L.thresholds[seed["i"]]
+    a, b = t["RoomA"], t["RoomB"]
+    if b < 0:
+        return False                                   # exterior: no neighbour to co-move (Stage B is interior)
+    idx = seed["axis"]                                 # 0 = const-X wall -> move X edges; 1 -> move Y edges
+    ra, rb = L.rooms[a], L.rooms[b]
+    save = (ra["Min"], ra["Max"], rb["Min"], rb["Max"])
+    P = seed["plane"] + perp                           # new wall centreline (local)
+
+    def set_edge(r, key, value):
+        pt = list(r[key]); pt[idx] = value; r[key] = (pt[0], pt[1])
+
+    a_low = (ra["Min"][idx] + ra["Max"][idx]) < (rb["Min"][idx] + rb["Max"][idx])
+    if a_low:                                          # A on the - side: A.max and B.min straddle P
+        set_edge(ra, "Max", P - T / 2); set_edge(rb, "Min", P + T / 2)
+    else:
+        set_edge(ra, "Min", P + T / 2); set_edge(rb, "Max", P - T / 2)
+
+    s2, rooms2 = dd_anchor._shell(L)                   # gate: facing still resolves + rooms non-degenerate
+    fc = s2.face_connection(a, b)
+    ok = (fc is not None and (fc[4] - fc[3]) > 1
+          and rooms2[a].W() > 1 and rooms2[a].D() > 1 and rooms2[b].W() > 1 and rooms2[b].D() > 1)
+    if not ok:
+        ra["Min"], ra["Max"], rb["Min"], rb["Max"] = save
+    return ok
+
+
 def default_w(kind):
-    return META["doorWidth"] if kind in ("Doorway", "Window") else META["corridorWidth"]
-def snap(v, step):
-    return round(v / step) * step if step > 0 else v
+    return 240.0 if kind in ("Doorway", "Window") else 200.0
 
-# Echo the grid the engine actually enforces (the Spec's GridSnap), up front — and flag drift if the
-# layout was authored on a different one (markers always round to the live Spec grid, not the layout's).
-print(f"engine grid (Spec.GridSnap): {GX:g}x{GY:g}x{GZ:g} cm")
-_ls = float(getattr(L, "snap", 0) or 0)
-if _ls and (abs(GX - _ls) > 1 or abs(GY - _ls) > 1):
-    print(f"  ! layout authored on {_ls:g} but the Spec grid is {GX:g}x{GY:g} — markers round to the Spec grid.")
 
-moved, merged, off_wall, past_wall, kept_entry, off_grid = [], [], [], [], [], []
-for s in seed:
-    link = L.links[s["i"]]
+moved, resized, merged, reshaped, kept, rejected, past_wall = [], [], [], [], [], [], []
+for s in seeds:
+    t = L.thresholds[s["i"]]
     m = mby.get(s["label"])
-    if m is None:                              # marker deleted
-        if link.get("bIsEntry") or link.get("RoomB", -1) < 0:
-            kept_entry.append(s["label"])      # entry/exterior: no neighbour to merge into (R1) -> keep
-            continue
-        link["Kind"] = "Open"                  # interior deletion -> MERGE the two spaces
-        link["Width"] = max(0.0, s["overlap"] - 2 * L.wall)
-        link["Height"] = 0.0
-        merged.append(s["label"])
-        continue
-    along = "y" if s["axis"] == 0 else "x"     # axis 0 = constant-X wall -> slide in Y; else slide in X
-    perp = "x" if s["axis"] == 0 else "y"
-    gstep = GY if s["axis"] == 0 else GX       # the grid along the slide axis
-    raw_pos = m[along] - s[along]
-    pos = snap(raw_pos, gstep)                 # round the marker onto the grid (the engine snaps too)
-    raw_w = m["width"] if m["width"] > 0 else 0.0
-    width = snap(raw_w, gstep) if raw_w > 0 else s["width"]
-    raw_h = m["height"] if m["height"] > 0 else 0.0
-    height = snap(raw_h, GZ) if raw_h > 0 else s["height"]
-    # report EACH dimension the marker had off the grid (we round it on) so the designer sees exactly
-    # what was nudged onto the grid: position (the drag) and any width/height resize. A 0 ("use the
-    # default") never flags.
-    rounded = []
-    if abs(raw_pos - pos) > 1:
-        rounded.append(f"pos {round(raw_pos)}->{round(pos)}")
-    if raw_w > 0 and abs(raw_w - width) > 1:
-        rounded.append(f"w {round(raw_w)}->{round(width)}")
-    if raw_h > 0 and abs(raw_h - height) > 1:
-        rounded.append(f"h {round(raw_h)}->{round(height)}")
-    if rounded:
-        off_grid.append((s["label"], rounded))
-    eff = width if width > 0 else default_w(m["kind"])
-    limit = max(0.0, s["overlap"] / 2.0 - eff / 2.0)
-    if abs(pos) > limit + 1:
-        past_wall.append((s["label"], round(pos), round(max(-limit, min(limit, pos)))))
-    if abs(m[perp] - s[perp]) > 5:
-        off_wall.append(s["label"])
-    if abs(pos) > 2 or m["kind"] != s["kind"] or abs(width - s["width"]) > 1:
-        moved.append((s["label"], round(pos)))
-    link["Position"] = pos
-    link["Kind"] = m["kind"]
-    link["Width"] = width
-    link["Height"] = height
+    if m is None:                                      # marker deleted
+        if t["bIsEntry"] or t["RoomB"] < 0:
+            kept.append(s["label"]); continue          # entry/exterior: R1 -> refuse
+        t["Kind"] = "Passage"; t["Width"] = max(0.0, (s["hi"] - s["lo"]) - 2 * T); t["Height"] = 0.0
+        merged.append(s["label"]); continue
+
+    lx, ly = m["x"] + dx, m["y"] + dy                  # marker world -> local
+    position, perp = dd_anchor.project(s, lx, ly)
+
+    # Stage B (perpendicular -> move the wall) is INTERIOR only; the entry never grows its wall (R1).
+    if t["RoomB"] >= 0 and not t["bIsEntry"] and abs(perp) > GRID * 0.5:
+        if reshape(s, snap(perp)):
+            reshaped.append((s["label"], round(snap(perp))))
+        else:
+            rejected.append((s["label"], round(perp)))
+
+    # Clamp the slide onto the wall span: a door can't slide off its wall, and the ENTRY must stay on
+    # its wall or the origin/PlayerStart strands off the navmesh. Dragging past the end = wanting a
+    # longer wall (an along-axis reshape, not built) -> clamp + report.
+    weff = t["Width"] if t["Width"] > 0 else default_w(t["Kind"])
+    limit = max(0.0, (s["hi"] - s["lo"]) / 2.0 - weff / 2.0)
+    clamped = max(-limit, min(limit, position))
+    if abs(position - clamped) > 1:
+        past_wall.append((s["label"], round(position), round(clamped)))
+    t["Position"] = snap(clamped)                      # Stage A: slide (clamped to the wall)
+    if m["kind"]:
+        t["Kind"] = m["kind"]
+    if m["width"] and m["width"] > 0:
+        t["Width"] = snap(m["width"]); resized.append((s["label"], round(t["Width"])))
+    if m["height"] and m["height"] > 0:
+        t["Height"] = m["height"]
+    if abs(position) > 2:
+        moved.append((s["label"], round(snap(position))))
+
+print("moved (slide):", moved)
+print("resized:", resized)
+print("reshaped (Stage B — wall moved):", reshaped)
+print("reshape REJECTED (would break the connection — reverted):", rejected)
+print("past wall (label, dragged-to, clamped-to — wants a longer wall, not slide):", past_wall)
+print("merged (deleted -> passage):", merged)
+print("kept (entry/exterior deletion refused, R1):", kept)
 
 L.write_apply("_apply.py", gen=C.GEN)
-result = ddrun.run("_apply.py")
-print("apply:", result)
-print("moved:", moved)
-print("merged (deleted -> open):", merged)
-print("off-grid (rounded onto the grid):", off_grid)
-print("off-wall (perpendicular drag; reshape is Stage B):", off_wall)
-print("past wall (label, requested, engine-clamps-to) -> wants Stage B reshape:", past_wall)
-print("kept (entry/exterior deletion refused -> R1 one-entry invariant):", kept_entry)
+print("apply:", ddrun.run("_apply.py"))
+print()
+dd_navcheck.check_connections(L)   # the gate: every connection still traversable
+print()
+dd_navcheck.check(L)
