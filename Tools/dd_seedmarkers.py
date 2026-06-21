@@ -1,21 +1,27 @@
 """dd_seedmarkers — spawn one movable ADraftDeskThreshold marker at every connection of a layout,
-so the author can drag them and then run dd_sync. Clears any existing markers first.
+positioned at its resolved world opening (via dd_anchor), so the author can drag them then run dd_sync.
+Clears existing markers first. Usage:
 
   python dd_seedmarkers.py            # seed markers for the example layout (dd_castle)
   python dd_seedmarkers.py my_layout
-
-set_properties is case-insensitive (kind/Kind both apply); the spawn script uses lowercase by
-convention. If a marker reads back 0 later it's the write-persistence flakiness, not casing —
-run dd_genrepair.py (see Docs/RESISTANCE.md).
 """
 import importlib
 import json
 import sys
 
 import ddrun
+import dd_anchor
 
 layout_mod = sys.argv[1] if len(sys.argv) > 1 else "dd_castle"
-pts = importlib.import_module(layout_mod).L.threshold_points()
+L = importlib.import_module(layout_mod).L
+seeds = dd_anchor.seeds(L)
+
+META = []
+for sd in seeds:
+    t = L.thresholds[sd["i"]]
+    META.append({"label": sd["label"], "x": sd["x"], "y": sd["y"], "z": sd["z"],
+                 "kind": t["Kind"], "plane": t["Plane"], "roomA": t["RoomA"], "roomB": t["RoomB"],
+                 "width": t["Width"], "height": t["Height"], "isEntry": t["bIsEntry"]})
 
 SPAWN = '''import json
 ADD = "editor_toolset.toolsets.scene.SceneTools.add_to_scene_from_class"
@@ -39,13 +45,14 @@ def run():
                       "rotation": {"pitch": 0, "yaw": 0, "roll": 0}, "scale": {"x": 1, "y": 1, "z": 1}}}))["returnValue"]
         try:
             execute_tool(SET, json.dumps({"instance": {"refPath": r["refPath"]}, "values": json.dumps(
-                {"kind": p["kind"], "width": p["width"], "height": p["height"], "label": p["label"]})}))
+                {"Kind": p["kind"], "Plane": p["plane"], "RoomA": p["roomA"], "RoomB": p["roomB"],
+                 "Width": p["width"], "Height": p["height"], "bIsEntry": p["isEntry"], "Label": p["label"]})}))
         except Exception:
             pass
         n += 1
     return {"spawned": n, "cleared": len(old)}
 '''
 
-script = SPAWN.replace("__PTS__", json.dumps(pts))
-print("seed points:", len(pts))
+script = SPAWN.replace("__PTS__", json.dumps(META))
+print("seed points:", len(META))
 print(ddrun.run_text(script))
