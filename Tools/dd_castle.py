@@ -104,6 +104,10 @@ L.box(2950,  250, 100, 50, 200, 200)
 
 if __name__ == "__main__":
     import ddrun
-    print("levels", len(L.levels), "rooms", len(L.rooms), "thresholds", len(L.thresholds), "boxes", len(L.boxes))
+    import dd_navcheck
+    print("levels", len(L.levels), "rooms", len(L.rooms), "thresholds", len(L.thresholds),
+          "flights", len(L.flights), "boxes", len(L.boxes))
     L.write_apply("_apply.py")
     print(ddrun.run("_apply.py"))
+    # Acceptance gate: query the live navmesh — every room must be walkable from the entrance.
+    dd_navcheck.check(L)
