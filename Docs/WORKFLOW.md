@@ -33,12 +33,13 @@ This is the core loop, matching the [philosophy](GOALS.md): *plan connections, f
    `Custom` payload and applies it via `ddrun`. The greybox builds instantly and the nav re-fits.
 3. **Seed thresholds.** `python dd_seedmarkers.py [layout]` spawns one movable `ADraftDeskThreshold`
    marker per connection, at its resolved location.
-4. **Drag.** In the editor, move the markers to where the connections *should* be. (Delete one to
-   merge two spaces; deleting an entry is refused.)
+4. **Drag.** In the editor, move the markers to where the connections *should* be — **onto the grid**
+   (`Metrics.GridSnap`, default 50 cm). (Delete one to merge two spaces; deleting an entry is refused.)
 5. **Sync.** `python dd_sync.py [layout]` reads the moved markers and rebuilds the geometry around
    them — slide (along-wall position), resize (width/height), merge (deleted interior link). It
-   prints what moved, what merged, and which markers sit *past the wall* (those want a Stage B
-   reshape, not yet built). The engine clamps every opening onto its wall, so nothing falls off.
+   prints what moved, what merged, which markers were *off-grid* (rounded onto the grid — precision,
+   not artistic control), and which sit *past the wall* (those want a Stage B reshape, not yet built).
+   The engine snaps every opening to the grid and clamps it onto its wall, so nothing falls off.
 6. **Look.** `python dd_cap.py out.png [cx cy radius]` saves a top-down screenshot (whole generator,
    or a framed region) without dumping base64 to the terminal.
 

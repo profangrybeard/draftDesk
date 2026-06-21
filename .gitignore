@@ -4,6 +4,9 @@ Intermediate/
 Saved/
 DerivedDataCache/
 
+# Logs (build / editor session output)
+*.log
+
 # IDE / OS
 .vs/
 *.sln

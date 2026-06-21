@@ -3,6 +3,12 @@
   "units": "cm",
   "note": "Default LD metrics. Override per game. Canonical source of truth for MCP blockouts; mirrored to the in-engine 'LD_Metrics' AgentSkill so it can be prompted from the editor.",
   "metrics": {
+    "grid": {
+      "snap_x": 50,
+      "snap_y": 50,
+      "snap_z": 50,
+      "comment": "Blocking grid (cm). Room footprints, openings, and floor heights snap to this; WallThickness rounds UP to a whole cell so shared walls stay grid-aligned. Generally locked (x=y=z); 0 on an axis disables snap there. Precision over artistic control."
+    },
     "player": {
       "capsule_half_height": 90,
       "capsule_radius": 34,

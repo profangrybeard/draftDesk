@@ -12,6 +12,15 @@ struct FDraftDeskMetrics
 {
 	GENERATED_BODY()
 
+	// --- Authoring grid ---
+	/** The blocking grid (cm). Room footprints, openings, and floor heights snap to this in X/Y/Z, and
+	 *  WallThickness rounds UP to a whole cell so abutting room faces stay grid-aligned and shared walls
+	 *  still dedup. Generally keep X=Y=Z (one locked grid); set per-axis only if you must. A 0 on an axis
+	 *  disables snap there (escape hatch). Precision over artistic control: author to the grid, or the
+	 *  tool rounds you onto it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (Units = "cm"))
+	FVector GridSnap = FVector(50.f, 50.f, 50.f);
+
 	// --- Doors ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Doors", meta = (ClampMin = "40", UIMin = "40", Units = "cm"))
 	float DoorWidth = 120.f;

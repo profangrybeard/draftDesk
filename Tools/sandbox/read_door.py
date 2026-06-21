@@ -15,4 +15,5 @@ def run():
     dw = metrics["doorWidth"] if "doorWidth" in metrics else None
     dh = metrics["doorHeight"] if "doorHeight" in metrics else None
     cw = metrics["corridorWidth"] if "corridorWidth" in metrics else None
-    return {"spec": specref, "doorWidth": dw, "doorHeight": dh, "corridorWidth": cw}
+    gs = metrics["gridSnap"] if "gridSnap" in metrics else None   # FVector {x,y,z}: the live blocking grid
+    return {"spec": specref, "doorWidth": dw, "doorHeight": dh, "corridorWidth": cw, "gridSnap": gs}

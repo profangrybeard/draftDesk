@@ -14,6 +14,13 @@ things that fight you; the design in [RULES.md](RULES.md) exists to defend again
   Cause: the in-editor MCP server (127.0.0.1:8000/mcp) is **only alive while the editor is open**.
   Fix: open the editor (wait for it to finish loading), then retry. This is also why the
   build/verify loop is *close → build → reopen → drive*.
+- **Editor is open and the MCP plugins are enabled, but `:8000` still refuses (nothing listening).**
+  Cause: `ModelContextProtocolSettings.bAutoStartServer` **defaults false** — the plugin registers its
+  toolsets (you'll see `LogModelContextProtocol: ... registered ... toolsets` in the log) but never
+  opens the HTTP port. Registering toolsets ≠ starting the server, and there is **no in-editor "start"
+  button**. Fix: **Editor Preferences → Model Context Protocol → Server → Auto Start Server**, then
+  restart (it only starts at module startup). One-off alternative: launch with
+  `-ModelContextProtocolStartServer` (`-ModelContextProtocolPort=8000`). See [SETUP.md](SETUP.md) §3.
 - **Locally-compiled UE DLLs blocked from loading.**
   Cause: Windows **Smart App Control** quarantines unsigned locally-built DLLs.
   Fix: it was turned off on the dev machine. If plugin code builds but won't load, check it.
@@ -77,6 +84,17 @@ things that fight you; the design in [RULES.md](RULES.md) exists to defend again
 - **A double wall or a thin sliver between two rooms.**
   Cause: a missing or wrong abutment gap (must be exactly `T`). Fix: use `east_of`/`north_of` (they
   place the gap), or hand-place with `A.Max + T == B.Min`.
+- **Two rooms touch (no wall gap) / a double wall appears after turning the grid on.**
+  Cause: a layout hand-authored an abutment gap that is **not a whole grid cell** (e.g. the legacy
+  30cm `T`). Snapping both faces to the grid then collapses the gap to 0 or stretches it to 2 cells, so
+  the wall planes no longer coincide. Fix: author the abutment gap as `Layout.wall` (one cell), which
+  matches the engine's `BuiltWallT`; don't hard-code a sub-cell `T`. The opposite mistake (gap > one
+  cell) just yields two real walls, correctly. This is why `WallThickness` rounds UP to a whole cell.
+- **A door/room "moved" or resized after I only changed the grid.**
+  Cause: not a bug — `GridSnap` rounds footprints, openings, and floor heights onto the grid (a 220
+  door height snaps to 200/250 at 50; a 320 floor to 300). It is *precision, not artistic control*.
+  Fix: pick metric/footprint values that are grid multiples if you want them untouched, or set the
+  relevant `GridSnap` axis to 0 to opt that axis out.
 - **Deleting an entry marker would strand the level.**
   Cause: an entry/exterior link has no neighbour to merge into; dropping it breaks the one-entry
   invariant (R1) and re-anchors the origin. Fix: `dd_sync` **refuses** to merge-delete a
@@ -87,7 +105,7 @@ things that fight you; the design in [RULES.md](RULES.md) exists to defend again
 | Symptom | First thing to try |
 |---|---|
 | Build won't link | Close editor; `taskkill` CrashReportClientEditor; rebuild |
-| `ddrun` can't connect | Is the editor open and finished loading? Is the MCP server plugin enabled? |
+| `ddrun` can't connect | Editor open + loaded? Plugins enabled? **Auto Start Server** ticked (defaults off)? |
 | `ddrun` errors in PowerShell | `curl` is aliased to Invoke-WebRequest — use cmd/git-bash or real `curl.exe` |
 | `ImportError: dd_config` | Run from inside the `Tools/` directory |
 | Editor crashed on apply | Use `write_apply()` order; it's already correct in the harness |

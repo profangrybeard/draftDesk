@@ -218,7 +218,7 @@ void ADraftDeskGenerator::BuildPreset(const FDraftDeskMetrics& M)
 
 void ADraftDeskGenerator::BuildPreset_RoomHallRoom(const FDraftDeskMetrics& M)
 {
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float ED = CellSize * 0.5f; // entry room depth/width (legacy 600 at CellSize 1200)
 	const float MD = CellSize;        // main room depth/width (legacy 1200)
 	const float HL = HallLength;
@@ -260,7 +260,7 @@ void ADraftDeskGenerator::BuildPreset_Corridor(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_LBend(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
 
 	const int32 HArm = AddRoom(0.f, -CW * 0.5f, 2.f * C, CW * 0.5f);
@@ -278,7 +278,7 @@ void ADraftDeskGenerator::BuildPreset_LBend(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_TJunction(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
 
 	const int32 Main = AddRoom(0.f, -CW * 0.5f, 3.f * C, CW * 0.5f);
@@ -295,7 +295,7 @@ void ADraftDeskGenerator::BuildPreset_TJunction(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_Cross(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
 	const float Hh = CW * 0.5f;
 
@@ -323,7 +323,7 @@ void ADraftDeskGenerator::BuildPreset_Cross(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_Grid2x2(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 
 	const int32 SW = AddRoom(0.f, -C, C, 0.f);
 	const int32 SE = AddRoom(C + T, -C, 2.f * C + T, 0.f);
@@ -340,7 +340,7 @@ void ADraftDeskGenerator::BuildPreset_Grid2x2(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_SplitLevel(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float Run = TotalRun(FloorDelta, M);
 
 	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 0.f);
@@ -357,7 +357,7 @@ void ADraftDeskGenerator::BuildPreset_SplitLevel(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_Tower(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float Run = TotalRun(FloorDelta, M);
 	const int32 NLevels = 3;
 
@@ -394,7 +394,7 @@ void ADraftDeskGenerator::BuildPreset_Tower(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_Ramp(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float Run = RampRun(FloorDelta, M);
 
 	const int32 R1 = AddRoom(0.f, -C * 0.5f, C, C * 0.5f, 0.f);
@@ -411,7 +411,7 @@ void ADraftDeskGenerator::BuildPreset_Ramp(const FDraftDeskMetrics& M)
 void ADraftDeskGenerator::BuildPreset_Mezzanine(const FDraftDeskMetrics& M)
 {
 	const float C = CellSize;
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float CW = M.CorridorWidth;
 	const float Run = TotalRun(FloorDelta, M);
 
@@ -513,9 +513,38 @@ void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
 	}
 }
 
+void ADraftDeskGenerator::SnapLayoutToGrid(const FDraftDeskMetrics& M)
+{
+	auto Snap = [](float V, float Step) { return Step > KINDA_SMALL_NUMBER ? FMath::GridSnap(V, Step) : V; };
+	const float SX = M.GridSnap.X, SY = M.GridSnap.Y, SZ = M.GridSnap.Z;
+
+	// Room footprints + floor/clear heights land on the grid. Equal-width abutting rooms snap their
+	// shared faces identically (same value in -> same value out), so the ledger still dedups them; the
+	// one-cell BuiltWallT keeps the gap a whole cell, so the wall planes stay coincident.
+	for (FDraftDeskRoom& R : Rooms)
+	{
+		R.Min.X = Snap(R.Min.X, SX); R.Max.X = Snap(R.Max.X, SX);
+		R.Min.Y = Snap(R.Min.Y, SY); R.Max.Y = Snap(R.Max.Y, SY);
+		R.FloorZ = Snap(R.FloorZ, SZ);
+		if (R.Height > 0.f) { R.Height = Snap(R.Height, SZ); }
+	}
+
+	// Solids (dais / cover / pillar / ledge): snap placement onto the grid; keep authored sizes.
+	for (FDraftDeskBlock& B : ExtraBoxes)
+	{
+		B.Center.X = Snap(B.Center.X, SX);
+		B.Center.Y = Snap(B.Center.Y, SY);
+		B.Center.Z = Snap(B.Center.Z, SZ);
+	}
+
+	// Stairs/ramps are EXEMPT: a flight is metric-correct (StepRise/StepRun within MaxStepTraversalAngle,
+	// R4) and snapping treads to the grid would violate that. Queued flights inherit the snapped floor Z
+	// of the rooms they bridge (CarveOpenings derives auto-stairs after this pass), so the landings align.
+}
+
 void ADraftDeskGenerator::EmitFloorsAndCeilings(const FDraftDeskMetrics& M)
 {
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	for (const FDraftDeskRoom& R : Rooms)
 	{
 		if (R.W() <= 1.f || R.D() <= 1.f)
@@ -536,7 +565,7 @@ void ADraftDeskGenerator::EmitFloorsAndCeilings(const FDraftDeskMetrics& M)
 
 void ADraftDeskGenerator::BuildEdgeLedger(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M)
 {
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 
 	auto Reg = [&](uint8 Axis, float Plane, float Lo, float Hi, float BaseZ, float WallH, bool bRail)
 	{
@@ -590,7 +619,7 @@ void ADraftDeskGenerator::BuildEdgeLedger(TMap<FString, FDraftDeskEdgeRec>& Ledg
 bool ADraftDeskGenerator::ResolveLinkEdge(const FDraftDeskLink& L, const FDraftDeskMetrics& M,
 	uint8& OutAxis, float& OutPlane, float& OutSharedLo, float& OutSharedHi) const
 {
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float Eps = 1.f;
 	// Authored data can be momentarily inconsistent (the property system applies arrays one at a
 	// time, each triggering a rebuild), so never trust a link's room indices without bounds-checking.
@@ -646,7 +675,7 @@ bool ADraftDeskGenerator::FaceConnection(const FDraftDeskLink& L, const FDraftDe
 	}
 	const FDraftDeskRoom& A = Rooms[L.RoomA];
 	const FDraftDeskRoom& B = Rooms[L.RoomB];
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float Adj = 1.f; // allow exact-abut and any positive gap; reject only deep overlap
 
 	bool bFound = false;
@@ -771,8 +800,27 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 		const float Weff = FMath::Min(W, Span);
 		const float Center = FMath::Clamp((SLo + SHi) * 0.5f + L.Position,
 			SLo + Weff * 0.5f, SHi - Weff * 0.5f);
-		const float OpenLo = Center - Weff * 0.5f;
-		const float OpenHi = Center + Weff * 0.5f;
+		float OpenLo = Center - Weff * 0.5f;
+		float OpenHi = Center + Weff * 0.5f;
+
+		// Snap the opening interval onto the grid so the jambs land on grid lines (clean nav + modular
+		// assembly): snap both ends to the wall's along-axis cell, keep at least one cell of clear width,
+		// and slide the snapped interval back inside the shared overlap [SLo,SHi]. SLo/SHi are already on
+		// the grid (room faces were snapped), so this stays put for any opening that fits the overlap.
+		{
+			const float GU = (Axis == 0) ? BuiltSnap.Y : BuiltSnap.X; // axis 0 = const-X wall -> slides in Y
+			if (GU > KINDA_SMALL_NUMBER && Span >= GU)
+			{
+				float SnapLo = FMath::GridSnap(OpenLo, GU);
+				float SnapHi = FMath::GridSnap(OpenHi, GU);
+				if (SnapHi - SnapLo < GU) { SnapHi = SnapLo + GU; }
+				if (SnapLo < SLo) { const float D = SLo - SnapLo; SnapLo += D; SnapHi += D; }
+				if (SnapHi > SHi) { const float D = SnapHi - SHi; SnapLo -= D; SnapHi -= D; }
+				SnapLo = FMath::Max(SnapLo, SLo);
+				SnapHi = FMath::Min(SnapHi, SHi);
+				if (SnapHi - SnapLo >= GU * 0.5f) { OpenLo = SnapLo; OpenHi = SnapHi; }
+			}
+		}
 
 		auto CarveInto = [&](float Plane)
 		{
@@ -803,6 +851,13 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 				O.Height = L.Height > 0.f ? L.Height : M.DoorHeight;
 				O.bFullClear = (L.Kind != EDraftDeskLinkKind::Doorway);
 			}
+			// snap the opening top (and a window's sill) onto the vertical grid; the lintel/sill clamp
+			// below is the final guard, so this can never push the opening through the wall top.
+			if (BuiltSnap.Z > KINDA_SMALL_NUMBER)
+			{
+				O.Height = FMath::GridSnap(O.Height, BuiltSnap.Z);
+				if (O.SillZ > 0.f) { O.SillZ = FMath::GridSnap(O.SillZ, BuiltSnap.Z); }
+			}
 			if (!O.bFullClear) // keep a lintel so the opening never cuts through the wall top
 			{
 				O.Height = FMath::Min(O.Height, Edge->WallH - 40.f);
@@ -818,7 +873,7 @@ void ADraftDeskGenerator::CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger
 
 void ADraftDeskGenerator::EmitWall(const FDraftDeskEdgeRec& E, const FDraftDeskMetrics& M)
 {
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 
 	auto Solid = [&](float ULo, float UHi, float ZLo, float ZHi)
 	{
@@ -927,7 +982,7 @@ void ADraftDeskGenerator::EmitStairFlight(const FDraftDeskStairJob& J, const FDr
 
 void ADraftDeskGenerator::EmitRamp(const FDraftDeskStairJob& J, const FDraftDeskMetrics& M)
 {
-	const float T = WallThickness;
+	const float T = BuiltWallT;
 	const float DZ = J.Z1 - J.Z0;
 	if (DZ <= 1.f)
 	{
@@ -982,12 +1037,27 @@ void ADraftDeskGenerator::Rebuild()
 	}
 	const FDraftDeskMetrics& M = Spec->Metrics;
 
+	// Per-build grid: blocking snaps to GridSnap, and WallThickness rounds UP to a whole XY cell so two
+	// abutting room faces (each snapped to the grid) stay exactly one wall-gap apart — that is what keeps
+	// their wall planes coincident and lets the edge ledger dedup them to a single shared wall. Computed
+	// before BuildPreset so the presets place their abutment gaps with the same effective thickness.
+	BuiltSnap = M.GridSnap;
+	{
+		const float GridXY = (BuiltSnap.X > KINDA_SMALL_NUMBER && BuiltSnap.Y > KINDA_SMALL_NUMBER)
+			? FMath::Min(BuiltSnap.X, BuiltSnap.Y)
+			: FMath::Max(BuiltSnap.X, BuiltSnap.Y); // 0 only if both axes disable snap
+		BuiltWallT = (GridXY > KINDA_SMALL_NUMBER)
+			? FMath::Max(GridXY, FMath::CeilToFloat(WallThickness / GridXY) * GridXY)
+			: WallThickness;
+	}
+
 	BuildPreset(M);
 	if (Rooms.Num() == 0 && StairQueue.Num() == 0 && ExtraBoxes.Num() == 0)
 	{
 		return;
 	}
 	NormalizeToEntry(M);
+	SnapLayoutToGrid(M);
 
 	EmitFloorsAndCeilings(M);
 

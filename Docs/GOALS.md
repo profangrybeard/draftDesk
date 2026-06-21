@@ -42,6 +42,16 @@ door size, step rise/run, max step angle, ceiling, vault/window, jump up/gap, ma
 capsule, speeds, FOV. Change a number, the blockout *and* the player locomotion respond live. The
 geometry is a pure function of (metrics, layout). See `Docs/LD_Metrics.json` for the schema.
 
+One of those metrics is the **grid** (`GridSnap`, default 50 cm): every footprint, opening, and floor
+height snaps to it, and wall thickness rides as a whole cell so blocking stays grid-aligned for clean
+pathing and easy modular assembly. The grid is *precision over artistic control* — you author to it,
+or the tool rounds you onto it (including off-grid threshold-marker drags). See [RULES.md](RULES.md).
+
+It is a call designers make **up front, not per-block.** The grid is the first field on the Spec and
+defaults to a real value (50), so there is no unset state and no per-snap free-for-all to fall into —
+you commit to a grid and the tool holds the whole blockout to it. The harness echoes the active grid
+on every apply so you never build without seeing which grid you're on. Designers don't yolo snaps.
+
 ## Success criteria
 
 - **Dictate → produce.** A described layout becomes a faithful, metric-correct greybox.
@@ -66,13 +76,18 @@ geometry is a pure function of (metrics, layout). See `Docs/LD_Metrics.json` for
   the shared wall, from any source.
 - **Nav auto-sync** *(harness — `write_apply`, on apply)* — every harness apply re-fits the
   `NavMeshBoundsVolume`. (An in-editor Spec/preset edit rebuilds geometry but does not re-fit nav.)
+- **Grid snap** *(engine — `Metrics.GridSnap`, default 50 cm)* — footprints, openings, and floors snap
+  to the grid from any source; `WallThickness` rounds up to a whole cell so abutment dedup survives;
+  stairs stay metric-correct. The harness (`dd_author`/`dd_sync`) snaps authored coords and reports
+  off-grid marker drags.
 
 **Next**
 - **Stage B reshape** — a marker dragged *perpendicular* off its wall moves/grows the wall (and the
   room footprint) to follow it. The natural completion of threshold-first authoring.
 - Robustness backlog (stairs markers → cross-flight offset; window Z-drag → sill; 3D-aware
   abutment; column-in-doorway check; min-pier between two doors on one wall; idempotent
-  delete→re-add). See the per-item list in the project notes.
+  delete→re-add; **box snap exempts Z / footprint-only** — snapping a solid's center on Z floats thin
+  floor decor, e.g. a 40cm dais, so author boxes on grid for now). See the per-item list in the project notes.
 
 **Horizon**
 - Consume the **GAME356 kit** — emit real `AInteractableDoor` actors at thresholds so the greybox is

@@ -15,5 +15,5 @@ def run():
         p = json.loads(execute_tool(GET, json.dumps({"instance": {"refPath": ref}, "properties": ["Label", "Kind", "Width", "Height"]}))["returnValue"])
         out.append({"label": p["Label"] if "Label" in p else "?", "kind": p["Kind"] if "Kind" in p else "Doorway",
                     "width": p["Width"] if "Width" in p else 0.0, "height": p["Height"] if "Height" in p else 0.0,
-                    "x": loc["x"], "y": loc["y"], "z": loc["z"]})
+                    "x": loc["x"], "y": loc["y"], "z": loc["z"], "ref": ref})
     return {"markers": out}

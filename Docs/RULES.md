@@ -29,10 +29,21 @@ These hold inside `ADraftDeskGenerator` (`Source/DraftDesk/Private/DraftDeskGene
 - **Walls grow OUTWARD by `WallThickness/2`.** So the room's Min/Max is the *true clear span* — a
   corridor authored 200 wide is 200 of walkable width (R4). Never inset the interior to "account for
   walls."
+- **Everything lands on the grid — `Metrics.GridSnap` (default 50/50/50 cm).** A post-normalize pass
+  (`SnapLayoutToGrid`) snaps room footprints, floor `FloorZ`, and clear `Height` to the grid; the
+  opening carve snaps each opening interval (and door/window top + sill) to it too. **`WallThickness`
+  rounds UP to a whole XY cell** for the build (`BuiltWallT`, default 30→50): that is what keeps the
+  grid and the *abutment rule* compatible — two faces snapped to the grid stay exactly one cell apart,
+  so the wall planes coincide and dedup still fires. **Stairs/ramps are exempt** (metric-correct treads,
+  R4 — snapping them would lie about the rise/run); they inherit the snapped floor Z of the rooms they
+  bridge. A `0` on a `GridSnap` axis disables snap there. Precision over artistic control: author to the
+  grid, or the tool rounds you onto it.
 - **Abutment rule: leave exactly a `WallThickness` (T) gap between abutting interior extents**
   (`A.Max + T == B.Min`). Then the two wall planes coincide (`A.Max+T/2 == B.Min−T/2`) and the edge
   ledger **dedups them to ONE shared wall**. A forgotten gap → a double wall or a sliver. The
-  harness `east_of`/`north_of` helpers place rooms with this gap automatically.
+  harness `east_of`/`north_of` helpers place rooms with this gap automatically. With the grid on,
+  `T` is the snapped `BuiltWallT` (a whole cell), and both faces snap to the grid — so the gap stays
+  exactly one cell and the dedup survives the snap (see the grid rule above).
 - **Unequal-width abutment does NOT dedup.** The wider room owns a full wall; the narrower room/
   corridor sets `OpenEdgeMask` on its through-edges so it registers no wall there.
 - **Connection guarantee — a declared link NEVER resolves to a solid wall.** `FaceConnection`

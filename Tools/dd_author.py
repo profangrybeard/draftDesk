@@ -12,10 +12,13 @@ Coordinates are actor-local cm, +X into the space. Abutting rooms are placed wit
 gap so their wall planes coincide and the engine dedups to ONE shared wall (the abutment rule).
 """
 import json
+import math
 from dd_config import GEN   # one source of the generator path (see dd_config.py)
 
 WEST, EAST, SOUTH, NORTH = 0, 1, 2, 3
 EDGE_NAME = {WEST: "West", EAST: "East", SOUTH: "South", NORTH: "North"}
+
+GRID = 50.0   # default authoring grid (cm); matches FDraftDeskMetrics.GridSnap. Precision, not art.
 
 
 def bit(*edges):
@@ -26,17 +29,36 @@ def bit(*edges):
 
 
 class Layout:
-    def __init__(self, wall=30.0, corridor=200.0):
-        self.wall = wall
+    def __init__(self, wall=None, corridor=200.0, snap=GRID):
+        # The grid every footprint snaps to (cm). Generally one locked value; 0 disables snapping.
+        self.snap = float(snap)
+        # Wall thickness rides as a whole number of grid cells so abutting faces stay one cell apart and
+        # the engine dedups them to one shared wall (matches the engine's BuiltWallT). Default: one cell.
+        if wall is None:
+            wall = self.snap if self.snap > 0 else 30.0
+        self.wall = self._snap_up(wall)
         self.cw = corridor
         self.rooms = []
         self.links = []
         self.stairs = []
         self.boxes = []
 
+    # --- grid helpers ---
+    def _snap(self, v):
+        """Round a coordinate onto the grid (no-op when snap is 0)."""
+        return round(float(v) / self.snap) * self.snap if self.snap > 0 else float(v)
+
+    def _snap_up(self, v):
+        """Round a thickness UP to a whole cell, min one cell (no-op when snap is 0)."""
+        return max(self.snap, math.ceil(float(v) / self.snap) * self.snap) if self.snap > 0 else float(v)
+
     # --- rooms ---
     def room(self, x0, y0, x1, y1, floor=0.0, height=0.0, ceiling=False,
              columns=False, open_edges=0, rail_edges=0, no_floor=False):
+        # snap the footprint onto the grid so the harness mirrors what the engine will build
+        x0, y0, x1, y1 = self._snap(x0), self._snap(y0), self._snap(x1), self._snap(y1)
+        floor = self._snap(floor)
+        height = self._snap(height) if height else height
         self.rooms.append(dict(Min=(float(x0), float(y0)), Max=(float(x1), float(y1)),
                                FloorZ=float(floor), Height=float(height), bCeiling=bool(ceiling),
                                bColumns=bool(columns), OpenEdgeMask=int(open_edges),
@@ -194,6 +216,13 @@ class Layout:
                 "AuthoredStairs": self.stairs, "AuthoredBoxes": boxes}
 
     def write_apply(self, path="_apply.py", gen=GEN):
+        # Echo the grid on every apply so it's a conscious, ever-present decision — a designer never
+        # builds without seeing which grid they committed to. The engine enforces Spec.GridSnap.
+        if self.snap > 0:
+            g = f"{self.snap:g}"
+            print(f"draftDesk: authoring on a {g}x{g}x{g} cm grid (wall = one cell); engine snaps to Spec.GridSnap.")
+        else:
+            print("draftDesk: layout grid snap OFF (snap=0) — the engine still snaps to Spec.GridSnap.")
         pj = json.dumps(self.payload())
         script = (
             "import json\n"

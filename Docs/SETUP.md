@@ -35,6 +35,12 @@ The `Tools/` harness drives the editor over Unreal's **built-in experimental MCP
   hidden by default), then enable the experimental **`ModelContextProtocol`** plugin and the
   **`AllToolsets`** plugin (they expose the ~50 `editor_toolset.*` / `EditorToolset.*` toolsets the
   harness calls). **Restart the editor** for the plugins to take effect.
+- **Turn the server ON — it does not auto-start.** `ModelContextProtocolSettings.bAutoStartServer`
+  defaults to **false**, so the plugin registers its toolsets but never opens the port. In **Edit →
+  Editor Preferences**, search **"Model Context Protocol"** → **Server** → tick **Auto Start Server**
+  (confirm **Server Port Number = 8000**, **Server Url Path = /mcp**), then **restart the editor**.
+  (There is no "start server" button; the only alternatives are this setting or launching with
+  `-ModelContextProtocolStartServer`.)
 - With those enabled, the editor hosts an HTTP-streamable MCP server at **`http://127.0.0.1:8000/mcp`**,
   **alive only while the editor is open** (it runs inside `UnrealEditor.exe`).
 - The harness pins protocol version `2025-06-18` and uses `toolset_name=

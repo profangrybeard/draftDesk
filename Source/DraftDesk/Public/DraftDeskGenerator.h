@@ -147,6 +147,12 @@ private:
 	TArray<FDraftDeskStairJob> StairQueue;
 	TArray<FDraftDeskBlock> ExtraBoxes;
 
+	// Effective per-build values (set at the top of Rebuild from the Spec's GridSnap + WallThickness):
+	// BuiltWallT is WallThickness rounded UP to a whole grid cell (>= one cell) so abutting room faces
+	// stay one wall-gap apart and the edge ledger dedups them. BuiltSnap is the active grid.
+	float BuiltWallT = 50.f;
+	FVector BuiltSnap = FVector(50.f, 50.f, 50.f);
+
 	void Rebuild();
 
 	// --- graph construction ---
@@ -170,6 +176,8 @@ private:
 
 	// --- emission passes ---
 	void NormalizeToEntry(const FDraftDeskMetrics& M);
+	/** Snap room footprints, floor heights, and solids onto BuiltSnap (stairs are exempt — R4). */
+	void SnapLayoutToGrid(const FDraftDeskMetrics& M);
 	void EmitFloorsAndCeilings(const FDraftDeskMetrics& M);
 	void BuildEdgeLedger(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M);
 	void CarveOpenings(TMap<FString, FDraftDeskEdgeRec>& Ledger, const FDraftDeskMetrics& M);
