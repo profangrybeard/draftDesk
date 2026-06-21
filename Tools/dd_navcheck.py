@@ -12,6 +12,7 @@ Usage:  python dd_navcheck.py            # checks dd_castle.L
 The editor must be open with the layout applied (run dd_castle.py first).
 """
 import json
+import math
 import time
 import ddrun
 
@@ -120,6 +121,100 @@ def check(L, retries=4, wait=4.0):
     return unreachable
 
 
+def _query_pairs(pairs):
+    """Run one nav query per (start,end) pair via a sandbox loop over the existing tool."""
+    script = (
+        "import json\n"
+        f'TOOL = "{TOOL}"\n'
+        f"PAIRS = json.loads(r'''{json.dumps(pairs)}''')\n"
+        "def run():\n"
+        "    out = []\n"
+        "    for p in PAIRS:\n"
+        "        r = execute_tool(TOOL, json.dumps({\"Start\": {\"x\": p[0], \"y\": p[1], \"z\": p[2]},\n"
+        "                                           \"Targets\": [{\"x\": p[3], \"y\": p[4], \"z\": p[5]}]}))\n"
+        "        rv = r[\"returnValue\"] if \"returnValue\" in r else r\n"
+        "        if rv:\n"
+        "            res = rv[0]\n"
+        "            out.append({\"reachable\": res[\"bReachable\"], \"length\": res[\"length\"]})\n"
+        "        else:\n"
+        "            out.append({\"reachable\": False, \"length\": -1})\n"
+        "    return {\"results\": out}\n"
+    )
+    res = ddrun.run_text(script, substitute=False)
+    return res["results"] if isinstance(res, dict) and "results" in res else res
+
+
+def check_connections(L, retries=4, wait=4.0):
+    """THE first test: every declared threshold (a connection) must be nav-traversable A<->B.
+    Catches a single blocked/sealed door that room-from-entrance reachability would mask, and a
+    same-level door forced into a long detour (the opening is blocked but the rooms connect elsewhere)."""
+    dx, dy, minz = _shift(L)
+
+    def base_z(level):
+        return L.levels[level]["BaseZ"] if L.levels and 0 <= level < len(L.levels) else 0.0
+
+    def center(i):
+        r = L.rooms[i]
+        return [(r["Min"][0] + r["Max"][0]) / 2 - dx, (r["Min"][1] + r["Max"][1]) / 2 - dy,
+                base_z(r["Level"]) - minz + 30.0]
+
+    conns = []  # (label, kind, A, B, same_level)
+    for t in L.thresholds:
+        a_i, b_i, kind = t["RoomA"], t["RoomB"], t["Kind"]
+        if b_i == -1:
+            if t["bIsEntry"]:
+                a = [0.0, 0.0, base_z(L.rooms[a_i]["Level"]) - minz + 30.0]
+                conns.append((f"entry->{a_i}", kind, a, center(a_i), True))
+            continue                       # rails / windows / other exterior openings aren't walk-throughs
+        if kind in ("Rail", "Window"):
+            continue
+        same = L.rooms[a_i]["Level"] == L.rooms[b_i]["Level"]
+        conns.append((f"{a_i}-{b_i}", kind, center(a_i), center(b_i), same))
+
+    pairs = [[c[2][0], c[2][1], c[2][2], c[3][0], c[3][1], c[3][2]] for c in conns]
+
+    def broken_of(rows):
+        bad = []
+        for (label, kind, A, B, same), r in zip(conns, rows):
+            reach = bool(r["reachable"]) if "reachable" in r else False
+            length = r["length"] if "length" in r else -1
+            straight = math.hypot(B[0] - A[0], B[1] - A[1])
+            # a same-level door forced way off the straight line means THIS opening is blocked
+            detour = reach and same and kind in ("Doorway", "Passage") and length > 2.0 * straight + 600
+            if (not reach) or detour:
+                bad.append(label)
+        return bad
+
+    rows = _query_pairs(pairs)
+    for _ in range(retries):                # ride out the async navmesh rebuild
+        if not broken_of(rows):
+            break
+        time.sleep(wait)
+        rows = _query_pairs(pairs)
+
+    print("NAV per-connection traversal (each threshold is a declared connection):")
+    broken = []
+    for (label, kind, A, B, same), r in zip(conns, rows):
+        reach = bool(r["reachable"]) if "reachable" in r else False
+        length = r["length"] if "length" in r else -1
+        straight = math.hypot(B[0] - A[0], B[1] - A[1])
+        ratio = (length / straight) if (reach and straight > 1) else 0.0
+        detour = reach and same and kind in ("Doorway", "Passage") and length > 2.0 * straight + 600
+        tag = "OK" if (reach and not detour) else ("DETOUR(blocked?)" if detour else "BLOCKED")
+        print(f"  {label:<11} {kind:<9} {tag:<16} len={length:>7.0f}  straight={straight:>6.0f}  x{ratio:.1f}")
+        if (not reach) or detour:
+            broken.append(label)
+    n = len(conns)
+    print(f"\n{n - len(broken)}/{n} declared connections traversable.")
+    if broken:
+        print(f"BLOCKED connections: {broken}  <-- a threshold that nav can't cross")
+    else:
+        print("==> EVERY DECLARED CONNECTION IS WALKABLE (threshold by threshold) <==")
+    return broken
+
+
 if __name__ == "__main__":
     import dd_castle
-    check(dd_castle.L)
+    check_connections(dd_castle.L)   # the primary, threshold-by-threshold gate
+    print()
+    check(dd_castle.L)               # complementary global reachability from the entrance

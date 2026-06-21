@@ -109,5 +109,7 @@ if __name__ == "__main__":
           "flights", len(L.flights), "boxes", len(L.boxes))
     L.write_apply("_apply.py")
     print(ddrun.run("_apply.py"))
-    # Acceptance gate: query the live navmesh — every room must be walkable from the entrance.
-    dd_navcheck.check(L)
+    # Acceptance gate (query the live navmesh, no screenshots):
+    dd_navcheck.check_connections(L)   # primary: every declared threshold must be traversable A<->B
+    print()
+    dd_navcheck.check(L)               # complementary: every room reachable from the entrance
