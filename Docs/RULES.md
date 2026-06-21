@@ -20,12 +20,18 @@ rules**. The LD construction rules (R1–R4) live in [LD_RULES.md](LD_RULES.md);
 
 ## Engine / data-model rules
 
-These hold inside `ADraftDeskGenerator` (`Source/DraftDesk/Private/DraftDeskGenerator.cpp`).
+These hold inside `ADraftDeskGenerator` (`Source/DraftDesk/Private/DraftDeskGenerator.cpp`), which
+defers all geometry to the watertight core (`Private/Shell/DdShellCore.h`).
 
-- **A layout is rooms + links.** A `FDraftDeskRoom` is an axis-aligned **interior** footprint
-  (Min/Max XY) at a `FloorZ` with a clear `Height`. A `FDraftDeskLink` connects two rooms (or a room
-  to the exterior, `RoomB == INDEX_NONE`). Stairs/boxes are the other two arrays. Geometry is a pure
-  function of (rooms, links, stairs, boxes, metrics).
+- **A layout is Levels + Rooms + Thresholds (+ Flights + Boxes) — the SHELL model.** A `FDdRoom` is an
+  axis-aligned **interior** footprint (Min/Max XY) on a `Level` (with optional `FloorZ`/`Height`
+  overrides). A `FDdThreshold` is the *single* opening primitive between two rooms (or a room and the
+  exterior, `RoomB == INDEX_NONE`): door = passage = window = rail = stairwell = hatch = atrium.
+  Geometry is a pure function of these via the 2D-Boolean core: every room deposits a solid rect on
+  each of its 6 faces, every threshold an aperture, and each per-plane bucket emits
+  `union(faces) − union(apertures)`. **A face is solid by construction** — it opens only where a
+  threshold proves a connection, so there are no silent holes (the old `OpenEdgeMask` failure mode is
+  gone — openness is relational, never a unary bit).
 - **Walls grow OUTWARD by `WallThickness/2`.** So the room's Min/Max is the *true clear span* — a
   corridor authored 200 wide is 200 of walkable width (R4). Never inset the interior to "account for
   walls."
@@ -39,13 +45,15 @@ These hold inside `ADraftDeskGenerator` (`Source/DraftDesk/Private/DraftDeskGene
   bridge. A `0` on a `GridSnap` axis disables snap there. Precision over artistic control: author to the
   grid, or the tool rounds you onto it.
 - **Abutment rule: leave exactly a `WallThickness` (T) gap between abutting interior extents**
-  (`A.Max + T == B.Min`). Then the two wall planes coincide (`A.Max+T/2 == B.Min−T/2`) and the edge
-  ledger **dedups them to ONE shared wall**. A forgotten gap → a double wall or a sliver. The
-  harness `east_of`/`north_of` helpers place rooms with this gap automatically. With the grid on,
-  `T` is the snapped `BuiltWallT` (a whole cell), and both faces snap to the grid — so the gap stays
-  exactly one cell and the dedup survives the snap (see the grid rule above).
-- **Unequal-width abutment does NOT dedup.** The wider room owns a full wall; the narrower room/
-  corridor sets `OpenEdgeMask` on its through-edges so it registers no wall there.
+  (`A.Max + T == B.Min`). Then the two wall planes coincide (`A.Max+T/2 == B.Min−T/2`) and the per-plane
+  Boolean **unions the two coincident faces into ONE shared wall**. A forgotten gap → a double wall or
+  a sliver. The harness `east_of`/`north_of` helpers place rooms with this gap automatically. With the
+  grid on, `T` is the snapped `BuiltWallT` (a whole cell), and both faces snap to the grid — so the gap
+  stays exactly one cell and the union survives the snap (see the grid rule above).
+- **Unequal-width abutment just unions** (no special case, no dedup key). Both rooms deposit their full
+  face into the same plane bucket; `union(faces)` merges them to one wall (the wider extent wins) and
+  the threshold subtracts one aperture at the shared overlap, with piers flanking. (Was a double-wall +
+  `OpenEdgeMask` workaround in the old per-edge ledger.)
 - **Connection guarantee — a declared link NEVER resolves to a solid wall.** `FaceConnection`
   tolerantly finds how two rooms face (across any gap or unequal widths, picking the closest valid
   facing with perpendicular overlap), and the carve punches through **both** facing wall planes. A

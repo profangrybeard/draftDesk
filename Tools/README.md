@@ -29,29 +29,35 @@ in-editor MCP server, scene objects). Then, with the editor open and the MCP ser
 |---|---|
 | `dd_config.py` | **The one config you edit** — `GEN`, `SPEC` (per project) + stable `THRESH`, `MCP_URL`. |
 | `ddrun.py` | The transport. Substitutes `{{GEN}}`/`{{SPEC}}`/`{{THRESH}}` into a sandbox script and runs it via curl. Import `ddrun.run(path)` / `ddrun.run_text(text)`, or `python ddrun.py <script>`. |
-| `dd_author.py` | The `Layout` library — compose rooms/links/stairs/boxes, emit the `Custom` payload, `write_apply()`. |
-| `dd_castle.py` | Worked example layout (Castle Chorrol). `import` it for `.L`; run it to apply. **Copy as a template.** |
-| `dd_sync.py` | **Stage A sync** — read moved markers → rebuild geometry (slide/resize/merge). The core loop. |
-| `dd_seedmarkers.py` | Spawn one movable marker per connection. |
-| `dd_genrepair.py` | Backfill markers whose width/height read back 0. |
-| `dd_stress.py` | Drive extreme values into a link to verify the engine clamp. |
+| `dd_author.py` | The `Layout` library — compose **Levels / Rooms / Thresholds / Flights / Boxes**, emit the `Custom` payload, `write_apply()` (clear-then-set: levels→rooms→thresholds). |
+| `dd_castle.py` | Worked example (Castle Chorrol, 2 levels, dual grand staircase). `import` it for `.L`; run it to apply **+ auto-run the nav gate**. **Copy as a template.** |
+| `dd_seedmarkers.py` | Spawn one movable marker per connection at its resolved opening, then **save the level**. |
+| `dd_sync.py` | **The core loop** — read dragged markers → rebuild: **slide** (clamped), **resize**, **merge** (delete→passage), **Stage B reshape** (perpendicular→move the wall). Then **nav-gate + save**. |
+| `dd_anchor.py` | Projects a marker onto its plane (the "ProjectAnchorToPlane" step) via the proven `shell` geometry; used by `dd_seedmarkers` (where to spawn) + `dd_sync` (where it landed). |
+| `dd_navcheck.py` | **The walkability gate** — `check_connections` (every threshold traversable A↔B) + `check` (every room reachable from the entrance), by querying the live navmesh. |
+| `dd_save.py` | Persist the level (generator + markers) via `AssetTools.save_assets` so drags survive a restart. |
+| `dd_stress.py` | Drive extreme values into a connection to verify the engine clamp. |
 | `dd_cap.py` | Top-down screenshot to a PNG (whole generator or a framed region). |
+| `dd_genrepair.py` | ⚠️ **Stale** — still on the retired link/`threshold_points` model; pending a rewrite. |
+| `shell/` | The pure-data **oracle** the engine core mirrors: `shell.py` + `rects2d.py`, `battery.py` (29 cases), `adv_fuzz.py`, `castle_shell.py`, and `cpp/ShellBatteryTest.cpp` (standalone C++ core test). |
 | `sandbox/` | UE-sandbox scripts (run via `ddrun`): `find_generator`, `read_markers`, `read_door`. |
 
-Generated/transient files (`_apply.py`, `*.png`, `__pycache__/`) are git-ignored.
+Generated/transient files (`_apply.py`, `*.png`, `__pycache__/`, `shell/cpp/_test.*`) are git-ignored.
 
 ## Quickstart — the loop
 
 ```bash
-python dd_castle.py                 # build + apply the example castle (nav re-fits)
-python dd_seedmarkers.py            # spawn a movable marker at every connection
-#   ... drag the markers in the editor; delete one to merge two spaces ...
-python dd_sync.py                   # rebuild geometry around the moved markers
-python dd_cap.py out.png            # screenshot the result
+python dd_castle.py                 # build + apply the example castle, then run the nav gate
+python dd_seedmarkers.py            # spawn a movable marker at every connection (+ save)
+#   ... drag the markers in the editor: slide along a wall, pull one perpendicular to
+#       reshape a room, or delete one to merge two spaces ...
+python dd_sync.py                   # rebuild around the markers (slide/resize/merge/reshape),
+                                    # re-run the nav gate, and save — so it sticks
 ```
 
 Use your own layout by passing its module name: `python dd_sync.py my_layout` (with `my_layout.py`
-in this folder, modeled on `dd_castle.py`).
+in this folder, modeled on `dd_castle.py`). The watertight core can be re-proven off-engine from
+`shell/`: `python battery.py` and `cd cpp && cmd /c "_build.bat ShellBatteryTest.cpp"`.
 
 ## Notes
 

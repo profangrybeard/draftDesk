@@ -1,5 +1,8 @@
 # draftDesk SHELL v1 — design spec
 
+> **STATUS: IMPLEMENTED.** This design is shipped. The watertight core is `Source/DraftDesk/Private/Shell/DdShellCore.h` (mirrored byte-for-byte by the `Tools/shell/` Python oracle, proven by a 42-case battery + property fuzzer); the data model is `DraftDeskLayout.h` (Levels/Rooms/Thresholds/Flights); the generator defers all geometry to the core. Beyond the spec, the build also landed: explicit edge-landing stair flights with **rail gaps derived from the flight**, the **marker-drag authoring loop** (seed → drag → sync; slide/resize/merge + Stage B reshape; nav-gated; persisted), and a **nav-query MCP tool** (`DraftDeskEditor.DdNavToolset`) + `dd_navcheck` walkability gate. The "open questions" below were resolved (atrium-as-threshold, explicit Levels[], strip-decomposition emit, SlabT, ProjectAnchorToPlane, validator policy) — see the project memory. Kept as the design record.
+
+
 _Synthesized by the `draftdesk-shell-system-redesign` workflow — winner **Planar Boundary Ledger (PBL): unified 3D plane-sweep with relational openings**; 23 hard cases; 15 agents._
 
 ## Approach ranking
