@@ -56,12 +56,16 @@ This is the core loop, matching the [philosophy](GOALS.md): *plan connections, f
 Watertight geometry can still be unwalkable (a stair that doesn't connect, an island room). The
 editor module exposes **`DraftDeskEditor.DdNavToolset.CheckReachability`** (queries the live navmesh
 via `FindPathToLocationSynchronously`). [`Tools/dd_navcheck.py`](../Tools/dd_navcheck.py) asserts:
-- **per-connection** (`check_connections`): every declared threshold is traversable A↔B (catches a
-  single blocked/sealed door that global reachability would mask);
+- **per-connection** (`check_connections`): every declared threshold *and every flight* is traversable
+  (catches a single blocked/sealed door that global reachability would mask). A flight is tested
+  **base→top**, isolating one staircase — a dual staircase with one dead side still passes global
+  reachability (you take the other stair), so only the per-flight test flags it (it shows up as a
+  large detour — the path reroutes via the working stair);
 - **global** (`check`): every room is reachable from the entrance.
 
 Both retry to ride out the async navmesh rebuild, and run automatically inside `dd_castle` and
-`dd_sync`. **A reshape only "sticks" if the layout stays 23/23 connections + every room walkable.**
+`dd_sync`. **A reshape only "sticks" if the layout stays fully connected (every threshold + every
+flight) and every room walkable** (the castle is 25/25: 23 thresholds + 2 staircases).
 
 ## Verifying the core off-engine
 

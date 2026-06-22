@@ -34,7 +34,7 @@ in-editor MCP server, scene objects). Then, with the editor open and the MCP ser
 | `dd_seedmarkers.py` | Spawn one movable marker per connection at its resolved opening, then **save the level**. |
 | `dd_sync.py` | **The core loop** — read dragged markers → rebuild: **slide** (clamped), **resize**, **merge** (delete→passage), **Stage B reshape** (perpendicular→move the wall). Then **nav-gate + save**. |
 | `dd_anchor.py` | Projects a marker onto its plane (the "ProjectAnchorToPlane" step) via the proven `shell` geometry; used by `dd_seedmarkers` (where to spawn) + `dd_sync` (where it landed). |
-| `dd_navcheck.py` | **The walkability gate** — `check_connections` (every threshold traversable A↔B) + `check` (every room reachable from the entrance), by querying the live navmesh. |
+| `dd_navcheck.py` | **The walkability gate** — `check_connections` (every threshold **and every flight** traversable; a flight is tested base→top, isolating one stair of a dual staircase) + `check` (every room reachable from the entrance), by querying the live navmesh. |
 | `dd_save.py` | Persist the level (generator + markers) via `AssetTools.save_assets` so drags survive a restart. |
 | `dd_stress.py` | Drive extreme values into a connection to verify the engine clamp. |
 | `dd_cap.py` | Top-down screenshot to a PNG (whole generator or a framed region). |

@@ -48,7 +48,7 @@ Beyond presets, draftDesk is a graph you author directly, the [threshold-first w
   A declared connection can never resolve to a solid wall, and an opening can never slide off its wall (engine-clamped, any source). Every sync is **nav-gated** (a reshape only sticks if the navmesh stays connected) and **saved to the level** (drags survive an editor restart).
 
 ## Walkability is a gate, not a guess
-The real test of a blockout is *"can the player actually walk everywhere it should?"* — which watertight geometry alone can't answer. The editor module exposes **`DraftDeskEditor.DdNavToolset.CheckReachability`**, which queries the live navmesh (`FindPathToLocationSynchronously`). [`Tools/dd_navcheck.py`](Tools/dd_navcheck.py) asserts, per layout: every declared **threshold** is traversable A↔B, and every **room** is reachable from the entrance. `dd_castle` runs it automatically after each apply.
+The real test of a blockout is *"can the player actually walk everywhere it should?"* — which watertight geometry alone can't answer. The editor module exposes **`DraftDeskEditor.DdNavToolset.CheckReachability`**, which queries the live navmesh (`FindPathToLocationSynchronously`). [`Tools/dd_navcheck.py`](Tools/dd_navcheck.py) asserts, per layout: every declared **threshold** *and every* **flight** is traversable, and every **room** is reachable from the entrance. A flight is tested **base→top**, which isolates one staircase — a dual staircase with one dead side still passes global reachability (you take the other stair), so only the per-flight test catches it. `dd_castle` runs it automatically after each apply.
 
 ## Layout (files)
 - `Source/DraftDesk/` — runtime C++ module
@@ -64,9 +64,8 @@ The real test of a blockout is *"can the player actually walk everywhere it shou
 - `Docs/` — goals, rules, resistance, workflow, the SHELL spec, construction rules + metric defaults
 
 ## Roadmap
-**Done:** the connection-first watertight **SHELL** (Levels/Rooms/Thresholds; watertight by construction, proven by a 42-case oracle + C++ battery); all presets re-authored (stacked levels + stairwell/atrium for verticality); explicit edge-landing stair flights with **rail gaps derived from the flight** (`RailGap-from-flight`); **marker-drag authoring** — seed → drag → sync with slide / resize / merge / **Stage B reshape**, **nav-gated** and **persisted to the level**; a **nav-query** MCP tool + `dd_navcheck` walkability gate.
+**Done:** the connection-first watertight **SHELL** (Levels/Rooms/Thresholds; watertight by construction, proven by a 42-case oracle + C++ battery); all presets re-authored (stacked levels + stairwell/atrium for verticality); explicit edge-landing stair flights with **rail gaps derived from the flight** (`RailGap-from-flight`); **marker-drag authoring** — seed → drag → sync with slide / resize / merge / **Stage B reshape**, **nav-gated** and **persisted to the level**; a **nav-query** MCP tool + `dd_navcheck` walkability gate — **per-connection**, testing every threshold *and every flight* (each stair base→top, so one dead side of a dual staircase is caught even though global reachability masks it).
 **Next:**
-- Make the stair a *per-connection* nav-tested traversal (add flights to `dd_navcheck.check_connections`).
 - Rewrite the stale `dd_genrepair` (still on the retired link model); door-frame trim; quiet cosmetic sync-report noise.
 - Robustness backlog: column-in-doorway check; min-pier between two doors on one wall; 3D-aware abutment; window Z-drag → sill; stair/ramp marker edits.
 - Auto-place a `PlayerStart` per space at its entry threshold (R2).

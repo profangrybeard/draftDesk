@@ -19,6 +19,18 @@ import ddrun
 TOOL = "DraftDeskEditor.DdNavToolset.CheckReachability"
 
 
+def step_total_run(dz, rise=18.0, run=30.0, max_angle=40.0):
+    """Horizontal run of a flight climbing dz — mirrors the engine's StepCount*StepRun (metric
+    defaults). Used only to anchor a flight's top point + a detour baseline, both of which have
+    slack, so an exact match to the Spec metrics isn't required."""
+    if dz <= 1:
+        return 0.0
+    nr = math.ceil(dz / rise)
+    tanmax = math.tan(math.radians(min(max_angle, 89.0)))
+    na = math.ceil(dz / (run * tanmax)) if tanmax > 1e-4 else nr
+    return max(1, nr, na) * run
+
+
 def _shift(L):
     """Replicate the engine's NormalizeToEntry: world = local - (dx, dy), Z unshifted (min level base = 0)."""
     T = L.wall
@@ -145,20 +157,28 @@ def _query_pairs(pairs):
 
 
 def check_connections(L, retries=4, wait=4.0):
-    """THE first test: every declared threshold (a connection) must be nav-traversable A<->B.
-    Catches a single blocked/sealed door that room-from-entrance reachability would mask, and a
-    same-level door forced into a long detour (the opening is blocked but the rooms connect elsewhere)."""
+    """THE first test: every declared connection must be nav-traversable A<->B — every threshold
+    AND every flight. Catches a single blocked/sealed door that room-from-entrance reachability would
+    mask, a same-level door forced into a long detour (the opening is blocked but the rooms connect
+    elsewhere), and a broken stair in a dual staircase (one side dead, the other still walkable)."""
     dx, dy, minz = _shift(L)
 
     def base_z(level):
         return L.levels[level]["BaseZ"] if L.levels and 0 <= level < len(L.levels) else 0.0
+
+    def floor_z(r):
+        return r["FloorZ"] if r["FloorZ"] >= 0 else base_z(r["Level"])
 
     def center(i):
         r = L.rooms[i]
         return [(r["Min"][0] + r["Max"][0]) / 2 - dx, (r["Min"][1] + r["Max"][1]) / 2 - dy,
                 base_z(r["Level"]) - minz + 30.0]
 
-    conns = []  # (label, kind, A, B, same_level)
+    def world(along, cross, z, along_x):     # a flight point -> normalized world (mirrors NormalizeToEntry)
+        return ([along - dx, cross - dy, z - minz] if along_x
+                else [cross - dx, along - dy, z - minz])
+
+    conns = []  # (label, kind, A, B, chk)   chk => apply the detour test (a long path means blocked)
     for t in L.thresholds:
         a_i, b_i, kind = t["RoomA"], t["RoomB"], t["Kind"]
         if b_i == -1:
@@ -169,18 +189,61 @@ def check_connections(L, retries=4, wait=4.0):
         if kind in ("Rail", "Window"):
             continue
         same = L.rooms[a_i]["Level"] == L.rooms[b_i]["Level"]
-        conns.append((f"{a_i}-{b_i}", kind, center(a_i), center(b_i), same))
+        conns.append((f"{a_i}-{b_i}", kind, center(a_i), center(b_i), same and kind in ("Doorway", "Passage")))
+
+    # A flight is a connection too, but it is NOT a threshold, so it never appeared above. Test each
+    # flight from the BASE of that stair to the TOP of that stair (the stair's own endpoints) — this
+    # ISOLATES one flight: a dual staircase with one broken side still passes global reachability AND
+    # hall->balcony centre-to-centre (you take the other stair); only a base->top query forces THIS
+    # flight, where a break shows up as UNREACHABLE or a large detour around via the working stair.
+    for fi, f in enumerate(L.flights):
+        ax = bool(f["bAlongX"]); d = 1 if f["Dir"] >= 0 else -1
+        u0, cv, z0, z1 = f["StartU"], f["CrossV"], f["FromZ"], f["ToZ"]
+        u_top = u0 + d * step_total_run(abs(z1 - z0))
+
+        def span(r):
+            return (r["Min"][1], r["Max"][1]) if ax else (r["Min"][0], r["Max"][0])
+
+        def near_edge(r):                  # the room edge facing the climb origin
+            return (r["Min"][0] if d > 0 else r["Max"][0]) if ax else (r["Min"][1] if d > 0 else r["Max"][1])
+
+        land, best = None, None            # landing room: at z1, cross in span, nearest edge up-climb
+        for i, r in enumerate(L.rooms):
+            if abs(floor_z(r) - z1) > 1:
+                continue
+            lo, hi = span(r)
+            if not (lo <= cv <= hi):
+                continue
+            adv = d * (near_edge(r) - u0)
+            if adv > 0 and (best is None or adv < best):
+                best, land, u_top = adv, i, near_edge(r)   # real edge beats the metric estimate
+        bot = None                         # bottom room: at z0, footprint over the flight base
+        for i, r in enumerate(L.rooms):
+            if abs(floor_z(r) - z0) > 1:
+                continue
+            inside = (r["Min"][0] - 1 <= u0 <= r["Max"][0] + 1 and r["Min"][1] <= cv <= r["Max"][1]) if ax \
+                else (r["Min"][1] - 1 <= u0 <= r["Max"][1] + 1 and r["Min"][0] <= cv <= r["Max"][0])
+            if inside:
+                bot = i; break
+
+        A = world(u0 - d * 100.0, cv, z0 + 30.0, ax)    # 1 m back into the bottom room
+        B = world(u_top + d * 100.0, cv, z1 + 30.0, ax)  # 1 m onto the landing floor
+        kind = "Ramp" if f["bRamp"] else "Stairs"
+        label = f"flight{fi}" + (f" {bot}->{land}" if (bot is not None and land is not None) else "")
+        conns.append((label, kind, A, B, True))
 
     pairs = [[c[2][0], c[2][1], c[2][2], c[3][0], c[3][1], c[3][2]] for c in conns]
 
+    def expected_of(A, B):
+        # 3D baseline: a flight's climb counts TOWARD the expected length, not against it
+        return math.hypot(math.hypot(B[0] - A[0], B[1] - A[1]), B[2] - A[2])
+
     def broken_of(rows):
         bad = []
-        for (label, kind, A, B, same), r in zip(conns, rows):
+        for (label, kind, A, B, chk), r in zip(conns, rows):
             reach = bool(r["reachable"]) if "reachable" in r else False
             length = r["length"] if "length" in r else -1
-            straight = math.hypot(B[0] - A[0], B[1] - A[1])
-            # a same-level door forced way off the straight line means THIS opening is blocked
-            detour = reach and same and kind in ("Doorway", "Passage") and length > 2.0 * straight + 600
+            detour = reach and chk and length > 2.0 * expected_of(A, B) + 600
             if (not reach) or detour:
                 bad.append(label)
         return bad
@@ -192,24 +255,24 @@ def check_connections(L, retries=4, wait=4.0):
         time.sleep(wait)
         rows = _query_pairs(pairs)
 
-    print("NAV per-connection traversal (each threshold is a declared connection):")
+    print("NAV per-connection traversal (every threshold + every flight is a declared connection):")
     broken = []
-    for (label, kind, A, B, same), r in zip(conns, rows):
+    for (label, kind, A, B, chk), r in zip(conns, rows):
         reach = bool(r["reachable"]) if "reachable" in r else False
         length = r["length"] if "length" in r else -1
-        straight = math.hypot(B[0] - A[0], B[1] - A[1])
-        ratio = (length / straight) if (reach and straight > 1) else 0.0
-        detour = reach and same and kind in ("Doorway", "Passage") and length > 2.0 * straight + 600
+        expected = expected_of(A, B)
+        ratio = (length / expected) if (reach and expected > 1) else 0.0
+        detour = reach and chk and length > 2.0 * expected + 600
         tag = "OK" if (reach and not detour) else ("DETOUR(blocked?)" if detour else "BLOCKED")
-        print(f"  {label:<11} {kind:<9} {tag:<16} len={length:>7.0f}  straight={straight:>6.0f}  x{ratio:.1f}")
+        print(f"  {label:<14} {kind:<9} {tag:<16} len={length:>7.0f}  expect={expected:>6.0f}  x{ratio:.1f}")
         if (not reach) or detour:
             broken.append(label)
     n = len(conns)
-    print(f"\n{n - len(broken)}/{n} declared connections traversable.")
+    print(f"\n{n - len(broken)}/{n} declared connections traversable (thresholds + flights).")
     if broken:
-        print(f"BLOCKED connections: {broken}  <-- a threshold that nav can't cross")
+        print(f"BLOCKED connections: {broken}  <-- a threshold or flight nav can't cross")
     else:
-        print("==> EVERY DECLARED CONNECTION IS WALKABLE (threshold by threshold) <==")
+        print("==> EVERY DECLARED CONNECTION IS WALKABLE (threshold by threshold, flight by flight) <==")
     return broken
 
 
