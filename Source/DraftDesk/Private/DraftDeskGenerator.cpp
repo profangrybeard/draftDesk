@@ -784,6 +784,9 @@ void ADraftDeskGenerator::Rebuild()
 			: (Th.bIsEntry ? FString(TEXT("entry")) : FString::Printf(TEXT("ext%d"), P.thr));
 		O.Kind = Th.Kind;
 		O.Position = FVector(P.x, P.y, P.z + 50.0); // +50 hover, matching the seeded marker height
+		O.RoomA = Th.RoomA; O.RoomB = Th.RoomB; O.Plane = Th.Plane;
+		O.Width = Th.Width; O.Height = Th.Height; O.Sill = Th.Sill; O.bIsEntry = Th.bIsEntry;
+		O.SourceThreshold = P.thr; O.SourceFlight = -1;
 		Openings.Add(O);
 	}
 	for (int32 N = 0; N < Flights.Num(); ++N)
@@ -795,6 +798,9 @@ void ADraftDeskGenerator::Rebuild()
 		O.Label = FString::Printf(TEXT("flight%d"), N);
 		O.Kind = F.bRamp ? EDdThresholdKind::Ramp : EDdThresholdKind::Stairwell;
 		O.Position = FVector(F.bAlongX ? UTop : F.CrossV, F.bAlongX ? F.CrossV : UTop, F.ToZ + 50.0);
+		O.RoomA = INDEX_NONE; O.RoomB = INDEX_NONE; O.Plane = EDdPlaneClass::Horizontal;
+		O.Width = F.Width; O.bIsEntry = false;
+		O.SourceThreshold = -1; O.SourceFlight = N;
 		Openings.Add(O);
 	}
 }

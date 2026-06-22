@@ -87,20 +87,30 @@ def run():
 
 
 def bijection(L):
+    # MULTISET, not set: count openings per label and markers per label. A set-compare would silently
+    # collapse two openings that share a label (a door + a window in one wall -> both "A-B") and certify
+    # a FALSE green while one opening has no marker. Counting catches it.
     ops = _engine_openings()
-    expected = {l for l in (_of(o, "Label", "label") for o in ops) if l is not None}
+    exp = {}
+    for o in ops:
+        lab = _of(o, "Label", "label")
+        if lab is not None:
+            exp[lab] = exp.get(lab, 0) + 1
     live = _read_markers()
-    live_counts = {}
+    liv = {}
     for lab in live:
-        live_counts[lab] = live_counts.get(lab, 0) + 1
-    missing = sorted(expected - set(live_counts))
-    orphan = sorted(set(live_counts) - expected)
-    dup = sorted(l for l, n in live_counts.items() if n > 1)
-    ok = not (missing or orphan or dup)
-    print(f"  1. BIJECTION   {'PASS' if ok else 'FAIL'}   (engine openings {len(expected)}, live markers {len(live)})")
-    if missing: print(f"        threshold/flight with NO marker: {missing}")
-    if orphan:  print(f"        marker with NO engine opening:   {orphan}")
-    if dup:     print(f"        duplicate markers:               {dup}")
+        liv[lab] = liv.get(lab, 0) + 1
+    labels = set(exp) | set(liv)
+    missing = sorted(l for l in labels if liv.get(l, 0) < exp.get(l, 0))       # opening(s) with too few markers
+    orphan = sorted(l for l in labels if l not in exp)                          # marker with no opening
+    over = sorted(l for l in labels if l in exp and liv.get(l, 0) > exp.get(l, 0))  # too many markers
+    collide = sorted(l for l, n in exp.items() if n > 1)                        # two openings, one label (build bug)
+    ok = not (missing or orphan or over or collide)
+    print(f"  1. BIJECTION   {'PASS' if ok else 'FAIL'}   (engine openings {sum(exp.values())}, live markers {len(live)})")
+    if missing:  print(f"        opening with NO marker:          {missing}")
+    if orphan:   print(f"        marker with NO engine opening:   {orphan}")
+    if over:     print(f"        too many markers for opening:    {over}")
+    if collide:  print(f"        COLLIDING opening labels (two thresholds share a wall — needs slice-3 SourceId): {collide}")
     return ok
 
 

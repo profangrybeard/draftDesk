@@ -29,6 +29,23 @@ struct FDdNavResult
 	float Length = -1.f;
 };
 
+/** Counts from a marker<->opening reconcile pass. Total = the generator's Openings count (the target). */
+USTRUCT(BlueprintType)
+struct FDdReconcileReport
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Spawned = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Moved = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Deleted = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Kept = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Total = 0;
+	/** Colliding opening labels kept-first (two thresholds share a wall) — a loud build smell; 0 normally. */
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Duplicates = 0;
+};
+
+class ADraftDeskGenerator;
+
 /**
  * draftDesk navigation toolset — query the LIVE navmesh, no screenshots.
  *
@@ -54,4 +71,17 @@ public:
 	 */
 	UFUNCTION(meta = (AICallable))
 	static TArray<FDdNavResult> CheckReachability(FVector Start, const TArray<FVector>& Targets);
+
+	/*
+	 * Reconcile the editor-world ADraftDeskThreshold markers to EXACTLY match the generator's Openings
+	 * array (the engine's own truth, refilled each rebuild): spawn a marker for every opening that lacks
+	 * one, move any marker that drifted off its opening onto it (this erases the ~25cm pre-snap seed
+	 * drift), and delete orphan/duplicate markers — leaving a strict label bijection between markers and
+	 * openings. The entry marker and rail markers are never deleted on a transient unresolve (R1 / caps
+	 * oscillate). Editor-world only (refuses to run during PIE). Whole pass is one undo transaction.
+	 * @param GeneratorPath Full object path of the ADraftDeskGenerator (e.g. dd_config.GEN).
+	 * @return {Spawned, Moved, Deleted, Kept, Total, Duplicates}.
+	 */
+	UFUNCTION(meta = (AICallable))
+	static FDdReconcileReport ReconcileMarkers(const FString& GeneratorPath);
 };

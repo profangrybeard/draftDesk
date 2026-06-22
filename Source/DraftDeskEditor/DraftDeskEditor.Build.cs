@@ -16,7 +16,8 @@ public class DraftDeskEditor : ModuleRules
 			"Engine",
 			"NavigationSystem",   // the live nav data we query (same nav the game uses)
 			"ToolsetRegistry",    // UToolsetDefinition -> exposes AICallable tools over MCP
-			"UnrealEd",           // GEditor / editor world
+			"UnrealEd",           // GEditor / editor world / FScopedTransaction / EditorDestroyActor
+			"DraftDesk",          // runtime types: ADraftDeskGenerator, ADraftDeskThreshold, FDdOpening
 		});
 	}
 }

@@ -1,6 +1,8 @@
-"""dd_seedmarkers — spawn one movable ADraftDeskThreshold marker at every connection of a layout,
-positioned at its resolved world opening (via dd_anchor), so the author can drag them then run dd_sync.
-Clears existing markers first. Usage:
+"""dd_seedmarkers — BOOTSTRAP ONLY. Spawn one movable ADraftDeskThreshold marker per connection from
+the Python seed model (dd_anchor). The STEADY-STATE placer is now the engine reconciler (dd_reconcile.py
+-> DdNavToolset.ReconcileMarkers), which the gate proves bijective and which corrects the ~25cm pre-snap
+seed drift this script's positions carry. Prefer dd_reconcile after any apply; use this only to bootstrap
+markers into a fresh level. Clears existing markers first. Usage:
 
   python dd_seedmarkers.py            # seed markers for the example layout (dd_castle)
   python dd_seedmarkers.py my_layout

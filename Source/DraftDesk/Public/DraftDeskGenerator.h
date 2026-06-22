@@ -88,6 +88,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "draftDesk|Author", meta = (EditCondition = "Preset == EDraftDeskPreset::Custom"))
 	TArray<FDraftDeskBlock> AuthoredBoxes;
 
+	/** The engine's emitted openings (one per resolved threshold + per flight), recorded each rebuild.
+	 *  PUBLIC so the editor-side reconciler reads it. The single source of truth for where markers belong. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	TArray<FDdOpening> Openings;
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 #if WITH_EDITOR
@@ -110,11 +115,6 @@ protected:
 	/** Columns — instances of one cylinder mesh. */
 	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
 	TObjectPtr<UInstancedStaticMeshComponent> Columns;
-
-	/** The engine's emitted openings (one per resolved threshold + per flight), recorded each rebuild.
-	 *  The single source of truth for where editable markers belong — tools read THIS, not a re-derivation. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
-	TArray<FDdOpening> Openings;
 
 private:
 	// --- transient build buffers (not reflected) ---

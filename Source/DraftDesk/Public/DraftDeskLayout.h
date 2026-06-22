@@ -273,6 +273,37 @@ struct FDdOpening
 	/** Marker-anchor world position (actor-local cm, post-normalize). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	FVector Position = FVector::ZeroVector;
+
+	// The fields a reconciler needs to STAMP a marker fully (so a spawned marker is not all defaults).
+	// Self-contained on purpose: the generator's Thresholds buffer is private to the runtime module.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	int32 RoomA = -1;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	int32 RoomB = -1;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	EDdPlaneClass Plane = EDdPlaneClass::Vertical;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk", meta = (Units = "cm"))
+	float Width = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk", meta = (Units = "cm"))
+	float Height = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk", meta = (Units = "cm"))
+	float Sill = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	bool bIsEntry = false;
+
+	/** Source threshold index, or -1 if this opening came from a flight. (Slice-3 identity down-payment.) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	int32 SourceThreshold = -1;
+
+	/** Source flight index, or -1 if this opening came from a threshold. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	int32 SourceFlight = -1;
 };
 
 /** A raw solid block: dais / podium, crate, cover block, pillar, ledge lip, bridge segment. */
