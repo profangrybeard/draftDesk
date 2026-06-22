@@ -456,7 +456,8 @@ class Shell:
             self.output[key] = b.solid
 
     def build(self):
-        self.pass0(); self.pass1(); self.pass2(); self.rail_gaps_from_flights(); self.emit()
+        self.pass0(); self.pass1(); self.pass2(); self.rail_gaps_from_flights()
+        self.enforce_min_pier(); self.emit()
         return self
 
     def rail_gaps_from_flights(self):
@@ -493,6 +494,38 @@ class Shell:
                 w = f.w if f.w > 0 else m.corridor_width
                 self.wall_bucket(cls, plane).apertures.append((cross - w / 2, cross + w / 2, fz, fz + H, PASSAGE, -1))
                 break
+
+    def enforce_min_pier(self):
+        """Guarantee a solid pier of >= T between any two openings that share a wall plane and overlap
+        in Z. Two openings authored closer than T would leave a sub-T sliver (or merge into one hole);
+        each is trimmed symmetrically on its facing side to reopen a T gap. If a trim would shrink an
+        opening below one grid cell, the pair is left as-authored and a warning is logged (the wall
+        genuinely can't seat both openings plus a pier). Openings whose Z-bands don't overlap (e.g. a
+        door and a clerestory window stacked above it) never contend for a pier."""
+        m = self.metrics; min_pier = m.T; min_open = max(m.grid, 1.0)
+        for key, b in self.buckets.items():
+            if b.cls == CLASS_SLAB or len(b.apertures) < 2:
+                continue
+            aps = [list(a) for a in b.apertures]
+            order = sorted(range(len(aps)), key=lambda i: aps[i][0] + aps[i][1])   # by along-axis centre
+            changed = False
+            for x in range(len(order)):
+                for y in range(x + 1, len(order)):
+                    a = aps[order[x]]; c = aps[order[y]]            # a's centre <= c's centre
+                    if not (a[2] < c[3] and c[2] < a[3]):
+                        continue                                    # Z-bands disjoint -> no pier needed
+                    gap = c[0] - a[1]
+                    if gap >= min_pier - 1e-6:
+                        continue
+                    d = (min_pier - gap) / 2.0
+                    if (a[1] - d - a[0]) < min_open or (c[1] - (c[0] + d)) < min_open:
+                        self.warnings.append(
+                            f"min-pier: openings {a[5]} & {c[5]} on plane {key} only {gap:.0f} apart "
+                            f"(< T={min_pier:.0f}) and can't be trimmed to a pier without collapsing one")
+                        continue
+                    a[1] -= d; c[0] += d; changed = True
+            if changed:
+                b.apertures = [tuple(v) for v in aps]
 
     # ----------------------------------------------------------------- validation
     def validate(self):

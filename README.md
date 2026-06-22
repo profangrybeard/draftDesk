@@ -67,6 +67,6 @@ The real test of a blockout is *"can the player actually walk everywhere it shou
 **Done:** the connection-first watertight **SHELL** (Levels/Rooms/Thresholds; watertight by construction, proven by a 42-case oracle + C++ battery); all presets re-authored (stacked levels + stairwell/atrium for verticality); explicit edge-landing stair flights with **rail gaps derived from the flight** (`RailGap-from-flight`); **marker-drag authoring** — seed → drag → sync with slide / resize / merge / **Stage B reshape**, **nav-gated** and **persisted to the level**; a **nav-query** MCP tool + `dd_navcheck` walkability gate — **per-connection**, testing every threshold *and every flight* (each stair base→top, so one dead side of a dual staircase is caught even though global reachability masks it).
 **Next:**
 - Door-frame trim; quiet cosmetic sync-report noise.
-- Robustness backlog: column-in-doorway check; min-pier between two doors on one wall; 3D-aware abutment; window Z-drag → sill; stair/ramp marker edits.
+- Robustness backlog: column-in-doorway check; 3D-aware abutment; window Z-drag → sill; stair/ramp marker edits.
 - Auto-place a `PlayerStart` per space at its entry threshold (R2).
 - Consume the **GAME356 kit** — emit real `AInteractableDoor` actors at thresholds.

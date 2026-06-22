@@ -66,6 +66,13 @@ defers all geometry to the watertight core (`Private/Shell/DdShellCore.h`).
   slide off it, can't open where the neighbour isn't, and both walls always carve one **aligned**
   passage. No corner-post margin is needed — each wall record overhangs the overlap by ≥T, so an
   opening flush to the overlap still leaves a structural pier.
+- **Min-pier — two openings on one wall always keep a solid pier of `≥ T` between them.** After every
+  aperture is placed, `enforce_min_pier` (`DdShellCore.h` / `shell.py`) checks each pair of openings
+  that share a wall plane **and** overlap in Z; a pair closer than `T` is trimmed symmetrically on its
+  facing side to reopen a `T` gap — so two doors authored too close stop merging into one hole behind a
+  fragile sub-`T` sliver. If the trim would shrink an opening below one grid cell, the pair is left
+  as-authored and a warning is logged (the wall genuinely can't seat both openings *plus* a pier).
+  Z-disjoint openings (a door and a clerestory window stacked above it) never contend for a pier.
 - **Link `Width`/`Height`/`Sill` of 0 means "use the metric default"** — `DoorWidth`/`DoorHeight`
   for a Doorway, `CorridorWidth` for an Open/Stairs, `WindowClearHeight`+`HalfWallHeight` for a
   Window. Authoring a 0 is normal and correct; it's not "no door."

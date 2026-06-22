@@ -295,7 +295,7 @@ public:
         if (levels.empty()) infer_levels();
     }
 
-    Shell& build() { pass0(); pass1(); pass2(); rail_gaps_from_flights(); emit(); return *this; }
+    Shell& build() { pass0(); pass1(); pass2(); rail_gaps_from_flights(); enforce_min_pier(); emit(); return *this; }
 
     // RailGap-from-flight: where an explicit flight lands at a RAILED edge, notch the rail at the
     // flight's CrossV (width = flight width). The gap derives from the flight, never drifting from it.
@@ -694,6 +694,37 @@ private:
         }
         for (int iface = rooms[lo_i].level + 1; iface <= rooms[hi_i].level; ++iface)
             slab_bucket(Iface{true, iface, 0}).apertures.push_back({well.alo, well.ahi, well.blo, well.bhi, t.kind, ti});
+    }
+
+    // Guarantee a solid pier of >= T between two openings that share a wall plane and overlap in Z
+    // (mirrors shell.py enforce_min_pier). Trims each opening symmetrically on its facing side to
+    // reopen a T gap; if a trim would shrink an opening below one grid cell, the pair is left as
+    // authored and a warning is logged. Z-disjoint openings (door + clerestory above) never contend.
+    void enforce_min_pier() {
+        const Metrics& m = metrics; double min_pier = m.T(); double min_open = std::max(m.grid, 1.0);
+        for (auto& kv : buckets) {
+            Bucket& b = kv.second;
+            if (b.cls == CLASS_SLAB || b.apertures.size() < 2) continue;
+            std::vector<int> order(b.apertures.size());
+            for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+            std::stable_sort(order.begin(), order.end(), [&](int i, int j) {
+                return (b.apertures[i].alo + b.apertures[i].ahi) < (b.apertures[j].alo + b.apertures[j].ahi);
+            });
+            for (size_t x = 0; x < order.size(); ++x)
+                for (size_t y = x + 1; y < order.size(); ++y) {
+                    Aperture& a = b.apertures[order[x]];   // a's centre <= c's centre
+                    Aperture& c = b.apertures[order[y]];
+                    if (!(a.blo < c.bhi && c.blo < a.bhi)) continue;   // Z-bands disjoint -> no pier needed
+                    double gap = c.alo - a.ahi;
+                    if (gap >= min_pier - 1e-6) continue;
+                    double sep = (min_pier - gap) / 2.0;
+                    if ((a.ahi - sep - a.alo) < min_open || (c.ahi - (c.alo + sep)) < min_open) {
+                        warnings.push_back("min-pier: openings too close on a wall plane to keep a pier");
+                        continue;
+                    }
+                    a.ahi -= sep; c.alo += sep;
+                }
+        }
     }
 
     void emit() {

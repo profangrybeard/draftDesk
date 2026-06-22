@@ -93,6 +93,21 @@ case("H7 two doors one wall -> pier",
      [Threshold(0, 1, DOORWAY, width=100, position=-100), Threshold(0, 1, DOORWAY, width=100, position=100)],
      prop=h7_pier, prop_name="full pier between two doors")
 
+# Two doors authored only 10 apart (sub-T). Without enforcement the wall keeps a 10-wide sliver pier;
+# enforce_min_pier trims each door symmetrically (100 -> 80 wide) to reopen a full T(=50) pier between
+# them. Door centres land at y=145 / y=255 (position is relative to the wall midpoint 200), so the
+# doors are [95,195] and [205,305] -> after the trim [95,175] and [225,305], pier [175,225].
+def h15(s):
+    b = (CLASS_X, 425)
+    pier = solid(s, b, (175, 225, 0, 200)) == 50 * 200    # full T-wide pier, solid floor->door-head
+    d1 = solid(s, b, (95, 175, 0, 200)) == 0              # left door still open (trimmed extent)
+    d2 = solid(s, b, (225, 305, 0, 200)) == 0             # right door still open (trimmed extent)
+    return pier and d1 and d2
+case("H15 two too-close doors -> min pier (T) enforced",
+     [Room(0, 0, 400, 400), Room(450, 0, 850, 400)],
+     [Threshold(0, 1, DOORWAY, width=100, position=-55), Threshold(0, 1, DOORWAY, width=100, position=55)],
+     prop=h15, prop_name="sub-T gap trimmed open to a full T pier")
+
 case("H10 door flush to corner",
      [Room(0, 0, 400, 400), Room(450, 0, 850, 400)], [Threshold(0, 1, DOORWAY, position=99999)],
      prop=lambda s: solid(s, (CLASS_X, 425), (400, 450, 0, 200)) > 0,

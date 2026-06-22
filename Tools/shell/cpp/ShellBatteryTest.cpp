@@ -249,6 +249,13 @@ int main(int argc, char** argv) {
         {Room(0,0,400,400), Room(450,0,850,400)},
         {Threshold(0,1,Doorway).w(100).pos(-100), Threshold(0,1,Doorway).w(100).pos(100)}, none(), M(),
         [](Shell& s){ return sld(s, WX(425), Rect(150,250,0,200)) == 100*200; }, "full pier between two doors");
+    case_prop("H15 two too-close doors -> min pier (T) enforced",
+        {Room(0,0,400,400), Room(450,0,850,400)},
+        {Threshold(0,1,Doorway).w(100).pos(-55), Threshold(0,1,Doorway).w(100).pos(55)}, none(), M(),
+        [](Shell& s){ return sld(s, WX(425), Rect(175,225,0,200)) == 50*200    // full T-wide pier between the doors
+                          && sld(s, WX(425), Rect(95,175,0,200)) == 0          // left door open (trimmed extent)
+                          && sld(s, WX(425), Rect(225,305,0,200)) == 0; },      // right door open (trimmed extent)
+        "sub-T gap trimmed open to a full T pier");
     case_prop("H8 no-neighbour wall stays solid",
         {Room(0,0,400,400)}, {Threshold(0,-1,Doorway).eg(WEST).entry()}, none(), M(),
         [](Shell& s){ return sld(s, WX(425), Rect(-50,450,0,300)) == 500*300; }, "opposite wall fully solid");
