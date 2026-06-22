@@ -119,6 +119,7 @@ namespace
 			const FDdOpening& O = **Found;
 			M->Modify();
 			M->SourceThreshold = O.SourceThreshold; M->SourceFlight = O.SourceFlight;
+			M->SetLockLocation(O.SourceFlight >= 0); // flights are DERIVED geometry — lock their markers (not draggable)
 			const FVector CurLocal = GenXform.InverseTransformPosition(M->GetActorLocation());
 			if (FVector::Dist(CurLocal, O.Position) > Eps)
 			{
@@ -145,6 +146,7 @@ namespace
 			M->Kind = O.Kind; M->Plane = O.Plane; M->RoomA = O.RoomA; M->RoomB = O.RoomB;
 			M->Width = O.Width; M->Height = O.Height; M->Sill = O.Sill; M->bIsEntry = O.bIsEntry;
 			M->SourceThreshold = O.SourceThreshold; M->SourceFlight = O.SourceFlight;
+			M->SetLockLocation(O.SourceFlight >= 0); // flights are DERIVED geometry — lock their markers (not draggable)
 			Home(M);
 			++Report.Spawned;
 		}
