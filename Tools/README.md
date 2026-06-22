@@ -38,7 +38,6 @@ in-editor MCP server, scene objects). Then, with the editor open and the MCP ser
 | `dd_save.py` | Persist the level (generator + markers) via `AssetTools.save_assets` so drags survive a restart. |
 | `dd_stress.py` | Drive extreme values into a connection to verify the engine clamp. |
 | `dd_cap.py` | Top-down screenshot to a PNG (whole generator or a framed region). |
-| `dd_genrepair.py` | ⚠️ **Stale** — still on the retired link/`threshold_points` model; pending a rewrite. |
 | `shell/` | The pure-data **oracle** the engine core mirrors: `shell.py` + `rects2d.py`, `battery.py` (29 cases), `adv_fuzz.py`, `castle_shell.py`, and `cpp/ShellBatteryTest.cpp` (standalone C++ core test). |
 | `sandbox/` | UE-sandbox scripts (run via `ddrun`): `find_generator`, `read_markers`, `read_door`. |
 

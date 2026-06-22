@@ -34,8 +34,11 @@ things that fight you; the design in [RULES.md](RULES.md) exists to defend again
   sometimes reverts across calls (it *does* apply in-call). This (not casing) is what left 14/18
   seeded markers at width 0. NOTE: `set_properties` is **case-insensitive** (`Width` and `width` both
   apply, verified) — do *not* "fix" this by changing key casing; that was a misdiagnosis. Fix:
-  `python dd_genrepair.py` backfills marker dims; and `dd_sync` already treats a 0 as "unspecified"
-  and falls back to the layout/metric default, so geometry is correct regardless.
+  **re-seed** (`python dd_seedmarkers.py` clears + respawns, idempotent). You usually don't even need
+  to — a `0` is **not** broken: both `dd_seedmarkers` (seeds the authored value, often 0) and `dd_sync`
+  (`if width > 0` else keep default) treat `0` as "use the metric default", so geometry is correct
+  regardless. (This is why the old `dd_genrepair` backfill tool was retired — it froze the default
+  into the marker, fighting the `0 = dynamic default` semantic.)
 - **A property read comes back with the "wrong" casing / a key-lookup misses.**
   Cause: `get_properties` OUTPUT is **PascalCase for top-level** UPROPERTYs but
   **first-char-lowercase for nested struct fields**. Fix: read top-level as `Width`, nested metric
@@ -43,6 +46,14 @@ things that fight you; the design in [RULES.md](RULES.md) exists to defend again
 - **Reading `Metrics` off the generator errors.**
   Cause: metrics live in the **Spec data asset**, not on the generator. Fix: read `generator.Spec`,
   then the Spec's `Metrics`.
+- **The nav gate reports EVERY connection BLOCKED with `len=-1` (and `check` shows 1/N — only the
+  start room).** Cause: the **wrong level is open** — the apply wrote to a soft-path actor that isn't
+  loaded, and the nav queries hit no mesh. This is NOT an async-rebuild/timing issue (timing is
+  *partial* — some green; total `-1` everywhere means no navmesh at the query points). Diagnose:
+  `SceneTools.get_current_level` + `find_actors` for `/Script/DraftDesk.DraftDeskGenerator`. Fix: load
+  `draftDesk_v0_1` (the generator / `NavMeshBoundsVolume` / `RecastNavMesh` live there, per
+  `dd_config.GEN`). `SceneTools.load_level` **refuses** to switch while the current level has unsaved
+  changes — have the user switch (don't save/discard their level for them).
 - **Editor crash: "Array index out of bounds: 0 into an array of size 0" on apply.**
   Cause: `set_properties` applies arrays one at a time, each triggering a rebuild, so Links can be
   set while Rooms is momentarily empty. Fix: the fixed **apply order** (clear connections → clear
@@ -110,4 +121,5 @@ things that fight you; the design in [RULES.md](RULES.md) exists to defend again
 | `ImportError: dd_config` | Run from inside the `Tools/` directory |
 | Editor crashed on apply | Use `write_apply()` order; it's already correct in the harness |
 | Door missing/blocked | Confirm the link exists; the engine guarantees a carve — check RoomA/RoomB indices |
-| Markers read back 0 | `python dd_genrepair.py` (write-persistence flakiness, not casing) |
+| Markers read back 0 | Not broken — `0` = "use default" (seed + sync handle it); re-seed (`dd_seedmarkers`) if a write truly dropped |
+| Every nav connection BLOCKED, `len=-1` | Wrong level open — `SceneTools.get_current_level`; the generator/nav live in `draftDesk_v0_1`, not the FirstPerson template |
