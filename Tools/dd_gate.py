@@ -166,10 +166,25 @@ def gate(L):
     return allok
 
 
+def gate_engine():
+    """Gate against ENGINE TRUTH — the live generator's authored arrays, NOT a static dictation. This is
+    the iteration-time gate: after a drag/move mutates the engine, dd_castle.L is stale, so all three
+    checks (bijection, watertight, nav) must read the geometry the generator actually holds."""
+    import dd_engine
+    return gate(dd_engine.layout())
+
+
 if __name__ == "__main__":
-    mod = sys.argv[1] if len(sys.argv) > 1 else "dd_castle"
-    L = importlib.import_module(mod).L
+    arg = sys.argv[1] if len(sys.argv) > 1 else "engine"
+    if arg == "engine":
+        import dd_engine
+        L = dd_engine.layout()
+        print("=== GATE source: ENGINE TRUTH (live generator's authored arrays) ===")
+    else:
+        L = importlib.import_module(arg).L
+        print(f"=== GATE source: static layout '{arg}' ===")
     ok = gate(L)
     print()
-    oracle_drift_note(L)    # informational: the old seed-model's offset from the engine's real openings
+    if arg != "engine":
+        oracle_drift_note(L)    # informational: the old seed-model's offset from the engine's real openings
     raise SystemExit(0 if ok else 1)
