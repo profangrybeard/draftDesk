@@ -10,6 +10,7 @@
 #include "NavigationPath.h"
 #include "DraftDeskGenerator.h"
 #include "DraftDeskThreshold.h"
+#include "DraftDeskRoomHandle.h"
 #include "DraftDeskSpec.h"
 
 TArray<FDdNavResult> UDdNavToolset::CheckReachability(FVector Start, const TArray<FVector>& Targets)
@@ -150,6 +151,59 @@ namespace
 			Home(M);
 			++Report.Spawned;
 		}
+
+		// --- ROOM HANDLES: exactly one draggable handle per room, at the engine-computed RoomAnchors (same
+		//     normalized frame as Openings). Keyed by RoomIndex, index-aligned to AuthoredRooms. Spawn
+		//     missing, move drifted, destroy orphans/dups. Handles are NEVER locked (always author-draggable,
+		//     unlike derived flight markers). Shares THIS pass's ReconcileSerial (bumped once above). ---
+		const TArray<FVector>& Anchors = Gen->RoomAnchors;
+		auto HomeHandle = [&](ADraftDeskRoomHandle* H)
+		{
+			H->ReconciledLocation = GenXform.InverseTransformPosition(H->GetActorLocation());
+			H->ReconcileSerial = Gen->ReconcileSerial;
+		};
+
+		TArray<ADraftDeskRoomHandle*> Handles;
+		for (TActorIterator<ADraftDeskRoomHandle> It(World); It; ++It)
+		{
+			if (It->GetLevel() == GenLevel) { Handles.Add(*It); }
+		}
+
+		TSet<int32> ClaimedRooms;
+		for (ADraftDeskRoomHandle* H : Handles)
+		{
+			const int32 RI = H->RoomIndex;
+			if (RI < 0 || RI >= Anchors.Num() || ClaimedRooms.Contains(RI))
+			{
+				H->Modify(); World->EditorDestroyActor(H, true); ++Report.RoomDeleted; continue; // orphan / dup
+			}
+			ClaimedRooms.Add(RI);
+			H->Modify();
+			const FVector WantWorld = GenXform.TransformPosition(Anchors[RI]);
+			if (FVector::Dist(H->GetActorLocation(), WantWorld) > Eps)
+			{
+				H->SetActorLocation(WantWorld); ++Report.RoomMoved;
+			}
+			else { ++Report.RoomKept; }
+			HomeHandle(H);
+		}
+
+		for (int32 RI = 0; RI < Anchors.Num(); ++RI)
+		{
+			if (ClaimedRooms.Contains(RI)) { continue; }
+			FActorSpawnParameters Params;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			Params.ObjectFlags |= RF_Transactional;
+			Params.OverrideLevel = GenLevel;
+			ADraftDeskRoomHandle* H = World->SpawnActor<ADraftDeskRoomHandle>(
+				GenXform.TransformPosition(Anchors[RI]), FRotator::ZeroRotator, Params);
+			if (!H) { continue; }
+			H->SetActorLabel(FString::Printf(TEXT("DD_ROOM_%d"), RI));
+			H->RoomIndex = RI;
+			HomeHandle(H);
+			++Report.RoomSpawned;
+		}
+		Report.RoomTotal = Anchors.Num();
 
 		if (GenLevel) { GenLevel->MarkPackageDirty(); }
 	}

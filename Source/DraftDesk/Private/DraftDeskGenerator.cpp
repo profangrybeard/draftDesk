@@ -847,4 +847,20 @@ void ADraftDeskGenerator::Rebuild()
 		O.SourceThreshold = -1; O.SourceFlight = N; O.Axis = 2; // flights are derived; never folded
 		Openings.Add(O);
 	}
+
+	// --- record one ROOM ANCHOR per room (normalized-local frame, same as Openings + the +50 hover): the
+	//     editor-side reconciler places exactly one draggable room handle at each, making room<->handle
+	//     bijective by build. Index-aligned to AuthoredRooms (Rooms == AuthoredRooms for Custom), so a
+	//     handle's RoomIndex is a valid AuthoredRooms index the move pass can translate. Engine frame so
+	//     the handle never re-derives normalize+snap. Custom-only: preset rooms are re-authored each build.
+	RoomAnchors.Reset();
+	if (Preset == EDraftDeskPreset::Custom)
+	{
+		for (const FDdRoom& R : Rooms)
+		{
+			const float Fz = (R.FloorZ >= 0.f) ? R.FloorZ
+				: (Levels.IsValidIndex(R.Level) ? Levels[R.Level].BaseZ : 0.f);
+			RoomAnchors.Add(FVector(R.CX(), R.CY(), Fz + 50.0));
+		}
+	}
 }

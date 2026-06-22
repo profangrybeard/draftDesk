@@ -93,6 +93,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	TArray<FDdOpening> Openings;
 
+	/** One anchor per room (normalized-local frame), recorded each rebuild — where the room HANDLE belongs.
+	 *  PUBLIC so the editor-side reconciler reads it; index-aligned to AuthoredRooms (Custom only, else empty).
+	 *  Computed here in the engine frame so the handle never re-derives normalize+snap (the frame-skew trap). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	TArray<FVector> RoomAnchors;
+
 	/** Bumped once per ReconcileMarkers pass; the loop-closed proof the iterative gate asserts advanced. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	int32 ReconcileSerial = 0;

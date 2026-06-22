@@ -22,5 +22,6 @@ GEN  = "/Game/_project/levels/draftDesk_v0_1.draftDesk_v0_1:PersistentLevel.Draf
 SPEC = "/Game/_project/DA_DraftDeskSpec.DA_DraftDeskSpec"
 
 # --- stable (rarely change) --------------------------------------------------
-THRESH  = "/Script/DraftDesk.DraftDeskThreshold"   # the movable marker actor class
+THRESH  = "/Script/DraftDesk.DraftDeskThreshold"   # the movable threshold marker actor class
+ROOMHANDLE = "/Script/DraftDesk.DraftDeskRoomHandle"  # the per-room draggable handle actor class
 MCP_URL = "http://127.0.0.1:8000/mcp"              # in-editor MCP server (live only while the editor is open)

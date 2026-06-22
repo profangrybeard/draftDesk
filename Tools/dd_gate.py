@@ -65,6 +65,24 @@ def run():
     return ddrun.run_text(READ)["labels"]
 
 
+def _read_handles():
+    """Live ADraftDeskRoomHandle actors -> their RoomIndex (the room each handle owns)."""
+    import dd_config
+    READ = ('import json\n'
+            'FIND="editor_toolset.toolsets.scene.SceneTools.find_actors"\n'
+            'GET="editor_toolset.toolsets.object.ObjectTools.get_properties"\n'
+            f'CLS="{dd_config.ROOMHANDLE}"\n'
+            'def run():\n'
+            '    acts=execute_tool(FIND,json.dumps({"name":"","tag":"","collision_channels":[],"actor_type":{"refPath":CLS}}))["returnValue"]\n'
+            '    out=[]\n'
+            '    for a in acts:\n'
+            '        pr=execute_tool(GET,json.dumps({"instance":{"refPath":a["refPath"]},"properties":["RoomIndex"]}))["returnValue"]\n'
+            '        pj=json.loads(pr) if isinstance(pr,str) else pr\n'
+            '        out.append(int(pj.get("roomIndex", pj.get("RoomIndex", -1))) if isinstance(pj,dict) else -1)\n'
+            '    return {"rooms": out}\n')
+    return ddrun.run_text(READ, substitute=False)["rooms"]
+
+
 def _of(o, *keys):
     for k in keys:
         if isinstance(o, dict) and k in o:
@@ -142,6 +160,26 @@ def watertight(L):
     return ok
 
 
+def room_bijection(L):
+    """One ADraftDeskRoomHandle per room, keyed by RoomIndex (0..N-1), no orphans/dups. The room<->handle
+    half of the gate — proves 'a room without a handle' and 'a handle without a room' can't ship, the way
+    the threshold bijection does for openings. (queries the LIVE handle actors)"""
+    n = len(L.rooms)
+    live = _read_handles()
+    cnt = {}
+    for ri in live:
+        cnt[ri] = cnt.get(ri, 0) + 1
+    missing = sorted(i for i in range(n) if cnt.get(i, 0) < 1)
+    orphan = sorted(ri for ri in cnt if ri < 0 or ri >= n)
+    over = sorted(ri for ri, c in cnt.items() if 0 <= ri < n and c > 1)
+    ok = not (missing or orphan or over)
+    print(f"  4. ROOM HANDLES {'PASS' if ok else 'FAIL'}   (rooms {n}, handles {len(live)})")
+    if missing: print(f"        room with NO handle:                           {missing}")
+    if orphan:  print(f"        handle with NO room (RoomIndex out of range):  {orphan}")
+    if over:    print(f"        too many handles for room:                     {over}")
+    return ok
+
+
 def nav_whole(L):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -160,7 +198,8 @@ def gate(L):
     b = bijection(L)
     w = watertight(L)
     n = nav_whole(L)
-    allok = b and w and n
+    h = room_bijection(L)
+    allok = b and w and n and h
     print("  " + "-" * 60)
     print(f"  GATE: {'PASS — green by query' if allok else 'FAIL'}")
     return allok
