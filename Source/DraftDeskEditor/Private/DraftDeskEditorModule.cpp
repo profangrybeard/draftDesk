@@ -5,6 +5,7 @@
 #include "DdNavToolset.h"
 #include "DraftDeskGenerator.h"
 #include "DraftDeskThreshold.h"
+#include "DraftDeskRoomHandle.h"
 #include "Editor.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -47,18 +48,22 @@ private:
 
 	void HandleActorMoved(AActor* Actor)
 	{
+		if (!Actor) { return; }
+		// Discriminate by which cast succeeds: a threshold MARKER (moves a connection) or a ROOM HANDLE
+		// (moves the space). Anything else is ignored. Both route to the same coalesced SyncDrags.
 		ADraftDeskThreshold* M = Cast<ADraftDeskThreshold>(Actor);
-		if (!M) { return; }
-		if (M->SourceFlight >= 0) { return; }                 // flights are locked / derived — never folded
+		ADraftDeskRoomHandle* H = M ? nullptr : Cast<ADraftDeskRoomHandle>(Actor);
+		if (!M && !H) { return; }
+		if (M && M->SourceFlight >= 0) { return; }            // flight markers are locked / derived — never folded
 		if (!GEditor || GEditor->PlayWorld != nullptr || GIsPlayInEditorWorld) { return; } // editor world only
 		UWorld* W = GEditor->GetEditorWorldContext().World();
-		if (!W || W->WorldType != EWorldType::Editor || M->GetWorld() != W) { return; }
-		if (GDdSyncQueued) { return; }                        // coalesce all of one drag's per-actor fires
+		if (!W || W->WorldType != EWorldType::Editor || Actor->GetWorld() != W) { return; }
+		if (GDdSyncQueued) { return; }                        // ONE latch coalesces a mixed marker+handle drag
 
 		ADraftDeskGenerator* Gen = nullptr;
 		for (TActorIterator<ADraftDeskGenerator> It(W); It; ++It)
 		{
-			if (It->GetLevel() == M->GetLevel()) { Gen = *It; break; }
+			if (It->GetLevel() == Actor->GetLevel()) { Gen = *It; break; }
 		}
 		if (!Gen) { return; }
 

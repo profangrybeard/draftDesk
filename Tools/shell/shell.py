@@ -266,18 +266,21 @@ class Shell:
 
     def face_connection(self, a, b):
         A, B = self.rooms[a], self.rooms[b]; T = self.metrics.T
+        # A wall abutment is exactly one cell apart on the snapped grid (gap == T); +1 absorbs float dust.
+        # Beyond gmax the rooms do NOT face (no single shared wall) -> a room dragged away DISCONNECTS.
+        gmax = T + 1.0
         cands = []
         oyl, oyh = max(A.y0, B.y0), min(A.y1, B.y1)
         if oyh > oyl:
-            if A.x1 <= B.x0 + 1:
+            if A.x1 <= B.x0 + 1 and abs(B.x0 - A.x1) <= gmax:
                 cands.append((abs(B.x0 - A.x1), CLASS_X, A.x1 + T / 2, B.x0 - T / 2, oyl, oyh))
-            if B.x1 <= A.x0 + 1:
+            if B.x1 <= A.x0 + 1 and abs(A.x0 - B.x1) <= gmax:
                 cands.append((abs(A.x0 - B.x1), CLASS_X, A.x0 - T / 2, B.x1 + T / 2, oyl, oyh))
         oxl, oxh = max(A.x0, B.x0), min(A.x1, B.x1)
         if oxh > oxl:
-            if A.y1 <= B.y0 + 1:
+            if A.y1 <= B.y0 + 1 and abs(B.y0 - A.y1) <= gmax:
                 cands.append((abs(B.y0 - A.y1), CLASS_Y, A.y1 + T / 2, B.y0 - T / 2, oxl, oxh))
-            if B.y1 <= A.y0 + 1:
+            if B.y1 <= A.y0 + 1 and abs(A.y0 - B.y1) <= gmax:
                 cands.append((abs(A.y0 - B.y1), CLASS_Y, A.y0 - T / 2, B.y1 + T / 2, oxl, oxh))
         if not cands:
             return None

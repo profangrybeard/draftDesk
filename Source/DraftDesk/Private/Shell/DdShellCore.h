@@ -460,17 +460,21 @@ private:
     // (axis, pa, pb, lo, hi); returns false if rooms don't face.
     bool face_connection(int a, int b, int& axis, double& pa, double& pb, double& lo, double& hi) const {
         const Room& A = rooms[a]; const Room& B = rooms[b]; double T = metrics.T();
+        // A wall abutment is exactly one cell apart on the snapped grid (gap == T); +1 absorbs float dust.
+        // Beyond Gmax the rooms do NOT face (no single shared wall) -> a room dragged away DISCONNECTS,
+        // instead of "facing" across a void and carving a split wall with a floating marker.
+        const double Gmax = T + 1.0;
         struct C { double gap; int axis; double pa, pb, lo, hi; };
         std::vector<C> cands;
         double oyl = std::max(A.y0, B.y0), oyh = std::min(A.y1, B.y1);
         if (oyh > oyl) {
-            if (A.x1 <= B.x0 + 1) cands.push_back({std::fabs(B.x0 - A.x1), CLASS_X, A.x1 + T/2, B.x0 - T/2, oyl, oyh});
-            if (B.x1 <= A.x0 + 1) cands.push_back({std::fabs(A.x0 - B.x1), CLASS_X, A.x0 - T/2, B.x1 + T/2, oyl, oyh});
+            if (A.x1 <= B.x0 + 1 && std::fabs(B.x0 - A.x1) <= Gmax) cands.push_back({std::fabs(B.x0 - A.x1), CLASS_X, A.x1 + T/2, B.x0 - T/2, oyl, oyh});
+            if (B.x1 <= A.x0 + 1 && std::fabs(A.x0 - B.x1) <= Gmax) cands.push_back({std::fabs(A.x0 - B.x1), CLASS_X, A.x0 - T/2, B.x1 + T/2, oyl, oyh});
         }
         double oxl = std::max(A.x0, B.x0), oxh = std::min(A.x1, B.x1);
         if (oxh > oxl) {
-            if (A.y1 <= B.y0 + 1) cands.push_back({std::fabs(B.y0 - A.y1), CLASS_Y, A.y1 + T/2, B.y0 - T/2, oxl, oxh});
-            if (B.y1 <= A.y0 + 1) cands.push_back({std::fabs(A.y0 - B.y1), CLASS_Y, A.y0 - T/2, B.y1 + T/2, oxl, oxh});
+            if (A.y1 <= B.y0 + 1 && std::fabs(B.y0 - A.y1) <= Gmax) cands.push_back({std::fabs(B.y0 - A.y1), CLASS_Y, A.y1 + T/2, B.y0 - T/2, oxl, oxh});
+            if (B.y1 <= A.y0 + 1 && std::fabs(A.y0 - B.y1) <= Gmax) cands.push_back({std::fabs(A.y0 - B.y1), CLASS_Y, A.y0 - T/2, B.y1 + T/2, oxl, oxh});
         }
         if (cands.empty()) return false;
         std::stable_sort(cands.begin(), cands.end(), [](const C& x, const C& y){ return x.gap < y.gap; });

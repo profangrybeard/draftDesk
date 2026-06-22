@@ -290,11 +290,14 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 	const double DragEps = 1.0;                           // detect a fresh drag (NOT the coarse drift band)
 	ULevel* GenLevel = Gen->GetLevel();
 
-	// Opening axis per source threshold (from the current, pre-fold Openings).
+	// Opening axis + the set of currently-RESOLVED thresholds (from the pre-fold Openings). ResolvedThr
+	// lets the delete sweep tell an author-deleted marker (threshold still resolved -> dissolve it) from a
+	// threshold that went DORMANT because a room moved off it (no opening -> keep it, it re-resolves on re-abut).
 	TMap<int32, int32> AxisByThr;
+	TSet<int32> ResolvedThr;
 	for (const FDdOpening& O : Gen->Openings)
 	{
-		if (O.SourceThreshold >= 0) { AxisByThr.Add(O.SourceThreshold, O.Axis); }
+		if (O.SourceThreshold >= 0) { AxisByThr.Add(O.SourceThreshold, O.Axis); ResolvedThr.Add(O.SourceThreshold); }
 	}
 
 	Gen->Modify();
@@ -333,6 +336,29 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 		++Report.Folded;
 	}
 
+	// ROOM-HANDLE translate (slice B1): a dragged room handle moves the WHOLE space. Fold the drag as a
+	// relative delta from the handle's reconciled home (immune to the frozen origin), grid-snap the RESULT
+	// in the authored frame (a room on-grid stays on-grid; both corners share the residue so W/D are
+	// preserved), and translate the footprint. XY only here (Z->Level is slice C). Connections re-resolve on
+	// the rebuild below: a door that still abuts re-places; one now > one wall away goes unresolved (the
+	// gap-clamped face_connection) -> dormant -> nav catches the break. (New-abutment auto-gain is slice B2.)
+	for (TActorIterator<ADraftDeskRoomHandle> It(World); It; ++It)
+	{
+		ADraftDeskRoomHandle* H = *It;
+		if (H->GetLevel() != GenLevel) { continue; }
+		const int32 RI = H->RoomIndex;
+		if (RI < 0 || RI >= Gen->AuthoredRooms.Num()) { continue; }
+		const FVector Delta = GenXform.InverseTransformPosition(H->GetActorLocation()) - H->ReconciledLocation;
+		if (FVector2D(Delta.X, Delta.Y).Size() <= DragEps) { continue; }   // no fresh XY drag
+		FDdRoom& R = Gen->AuthoredRooms[RI];
+		auto SnapAuthored = [Grid](float v) { return (Grid > 1.0) ? FMath::GridSnap(v, (float)Grid) : v; };
+		R.Min.X = SnapAuthored(R.Min.X + (float)Delta.X);
+		R.Max.X = SnapAuthored(R.Max.X + (float)Delta.X);
+		R.Min.Y = SnapAuthored(R.Min.Y + (float)Delta.Y);
+		R.Max.Y = SnapAuthored(R.Max.Y + (float)Delta.Y);
+		++Report.RoomTranslated;
+	}
+
 	// DELETE sweep: an interior threshold with no live marker dissolves to a full-clear Passage. Merging
 	// (not removing) keeps AuthoredThresholds indices stable so other markers' SourceThreshold stays valid.
 	for (int32 i = 0; i < Gen->AuthoredThresholds.Num(); ++i)
@@ -342,6 +368,10 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 		if (Th.bIsEntry || Th.RoomB == INDEX_NONE || Th.Kind == EDdThresholdKind::Rail)
 		{
 			++Report.Kept; continue;   // R1: entry / exterior / rail are never auto-removed
+		}
+		if (!ResolvedThr.Contains(i))
+		{
+			++Report.Kept; continue;   // DORMANT (no opening): a room moved off it; keep as-is, it re-resolves on re-abut
 		}
 		Th.Kind = EDdThresholdKind::Passage; Th.Width = 0.f; Th.Height = 0.f;
 		++Report.Merged;
