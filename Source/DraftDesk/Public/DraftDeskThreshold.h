@@ -63,6 +63,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Threshold")
 	FName Label;
 
+	// --- engine-owned reconcile/fold bookkeeping (set by the reconciler; do not hand-edit) ---
+
+	/** The AuthoredThresholds index this marker folds a drag into; -1 => flight/unstamped => never folded. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Threshold")
+	int32 SourceThreshold = -1;
+
+	/** Source flight index, or -1; flights are derived (grid-exempt) and never folded. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Threshold")
+	int32 SourceFlight = -1;
+
+	/** Engine-written home (actor-local cm) after the last reconcile — the baseline a fresh drag is measured from. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Threshold")
+	FVector ReconciledLocation = FVector::ZeroVector;
+
+	/** The generator ReconcileSerial that last stamped this marker (detects stale markers across rebuilds). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Threshold")
+	int32 ReconcileSerial = 0;
+
 protected:
 	/** Camera-facing editor icon; the actor's movable root (select it for the gizmo). */
 	UPROPERTY(VisibleAnywhere, Category = "Threshold")

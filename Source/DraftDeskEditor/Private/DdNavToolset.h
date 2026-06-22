@@ -42,6 +42,11 @@ struct FDdReconcileReport
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Total = 0;
 	/** Colliding opening labels kept-first (two thresholds share a wall) — a loud build smell; 0 normally. */
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Duplicates = 0;
+	// SyncDrags-only buckets:
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Folded = 0;    // drags folded into the model (slide)
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Reshaped = 0;  // perpendicular drags deferred to 3b
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Merged = 0;    // deleted markers -> threshold dissolved to Passage
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 PastWall = 0;  // along-drag past the wall (stored raw; carve clamps)
 };
 
 class ADraftDeskGenerator;
@@ -84,4 +89,18 @@ public:
 	 */
 	UFUNCTION(meta = (AICallable))
 	static FDdReconcileReport ReconcileMarkers(const FString& GeneratorPath);
+
+	/*
+	 * The bidirectional drag loop. For each threshold marker the author moved (slid along its wall),
+	 * fold the move into the generator's authored model as a RELATIVE delta from the marker's last
+	 * reconciled home, then rebuild and re-reconcile so the marker holds and the bijection is restored.
+	 * A marker dragged PERPENDICULAR off its wall is deferred (Stage-B reshape, 3b). A deleted marker
+	 * dissolves its (interior) threshold to a full-clear Passage; the entry + rails + exterior openings
+	 * are refused (R1). The entry is never folded (it is the normalize origin). Custom preset only;
+	 * editor-world only. Whole pass is one undo transaction; ends by bumping the generator ReconcileSerial.
+	 * @param GeneratorPath Full object path of the ADraftDeskGenerator (e.g. dd_config.GEN).
+	 * @return {Spawned, Moved, Deleted, Kept, Total, Duplicates, Folded, Reshaped, Merged, PastWall}.
+	 */
+	UFUNCTION(meta = (AICallable))
+	static FDdReconcileReport SyncDrags(const FString& GeneratorPath);
 };

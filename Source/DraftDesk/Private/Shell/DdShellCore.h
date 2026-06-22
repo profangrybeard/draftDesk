@@ -220,7 +220,9 @@ struct Flight {
 
 // A marker anchor: the shell-frame point where a threshold's editable handle (marker) belongs.
 // One per threshold; resolved=false if the threshold doesn't face/resolve (so it carved nothing).
-struct OpeningPt { int thr; bool resolved; double x, y, z; };
+// cls is the slide axis: CLASS_X (const-X wall, slides in Y), CLASS_Y (slides in X), CLASS_SLAB
+// (horizontal hole, 2D). Lets the drag-fold project a marker move onto the wall without rebuilding.
+struct OpeningPt { int thr; bool resolved; double x, y, z; int cls; };
 
 // A ready-to-place 3D box (cm). emit_boxes() returns one per solid output rect across all buckets.
 // kind: 0 = wall, 1 = floor-bearing slab (someone stands on it — always emit), 2 = ceiling/roof-only
@@ -370,7 +372,7 @@ public:
         const int n = (int)rooms.size();
         for (size_t ti = 0; ti < thresholds.size(); ++ti) {
             const Threshold& t = thresholds[ti];
-            OpeningPt o{(int)ti, false, 0, 0, 0};
+            OpeningPt o{(int)ti, false, 0, 0, 0, -1};
             const bool bad_a = !(t.room_a >= 0 && t.room_a < n);
             const bool bad_b = (t.room_b != -1) && !(t.room_b >= 0 && t.room_b < n);
             if (bad_a || bad_b) { out.push_back(o); continue; }
@@ -378,20 +380,20 @@ public:
                 const Room& A = rooms[t.room_a];
                 o.x = (A.x0 + A.x1) / 2.0 + t.position;
                 o.y = (A.y0 + A.y1) / 2.0 + t.position2;
-                o.resolved = true;
+                o.cls = CLASS_SLAB; o.resolved = true;
             } else if (t.room_b == -1) {                       // exterior: on the named edge
                 int cls; double pa, lo, hi; resolve_exterior(t, cls, pa, lo, hi);
                 const double along = (lo + hi) / 2.0 + t.position;
                 o.x = (cls == CLASS_X) ? pa : along;
                 o.y = (cls == CLASS_X) ? along : pa;
-                o.resolved = true;
+                o.cls = cls; o.resolved = true;
             } else {                                           // interior: the wall centreline between the rooms
                 int axis; double pa, pb, lo, hi;
                 if (face_connection(t.room_a, t.room_b, axis, pa, pb, lo, hi)) {
                     const double plane = (pa + pb) / 2.0, along = (lo + hi) / 2.0 + t.position;
                     o.x = (axis == CLASS_X) ? plane : along;
                     o.y = (axis == CLASS_X) ? along : plane;
-                    o.resolved = true;
+                    o.cls = axis; o.resolved = true;
                 }
             }
             if (o.resolved) {

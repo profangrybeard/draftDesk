@@ -304,6 +304,11 @@ struct FDdOpening
 	/** Source flight index, or -1 if this opening came from a threshold. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	int32 SourceFlight = -1;
+
+	/** Slide axis: 0 = const-X wall (marker slides in Y), 1 = const-Y wall (slides in X), 2 = slab/2D.
+	 *  Lets the drag-fold project a marker move onto the wall without rebuilding a shell. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	int32 Axis = -1;
 };
 
 /** A raw solid block: dais / podium, crate, cover block, pillar, ledge lip, bridge segment. */

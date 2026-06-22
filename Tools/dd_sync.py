@@ -1,6 +1,10 @@
-"""dd_sync — marker -> geometry sync. The heart of threshold-first authoring: the author drags
-ADraftDeskThreshold markers, runs this, and the layout updates around where the markers landed,
-rebuilds, and re-runs the nav gate.
+"""dd_sync — SUPERSEDED for slide/merge by the engine reconciler. The slide + delete-merge paths now
+live in the engine (drag markers, then `python dd_drag.py` -> DdNavToolset.SyncDrags folds, rebuilds,
+reconciles; markers can't drift, and it corrects the old ~25cm pre-snap frame). This script remains only
+as the reference for Stage-B perpendicular reshape (dd_sync.reshape), pending its engine port in slice 3b.
+
+marker -> geometry sync (legacy): the author drags ADraftDeskThreshold markers, runs this, and the layout
+updates around where the markers landed, rebuilds, and re-runs the nav gate.
 
   python dd_sync.py            # sync the example layout (dd_castle)
   python dd_sync.py my_layout

@@ -93,6 +93,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	TArray<FDdOpening> Openings;
 
+	/** Bumped once per ReconcileMarkers pass; the loop-closed proof the iterative gate asserts advanced. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	int32 ReconcileSerial = 0;
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 #if WITH_EDITOR
