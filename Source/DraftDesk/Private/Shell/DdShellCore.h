@@ -405,6 +405,12 @@ public:
         return out;
     }
 
+    // Public wrapper so the editor reshape gate can ask "do rooms a,b still face, and how" without
+    // pulling in the private machinery. Translation-invariant (works on a freshly-built Shell, no build()).
+    bool faces_public(int a, int b, int& axis, double& pa, double& pb, double& lo, double& hi) const {
+        return face_connection(a, b, axis, pa, pb, lo, hi);
+    }
+
 private:
     std::vector<std::pair<double,double>> eff_;
     bool inferred = false;

@@ -47,6 +47,7 @@ struct FDdReconcileReport
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Reshaped = 0;  // perpendicular drags deferred to 3b
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Merged = 0;    // deleted markers -> threshold dissolved to Passage
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 PastWall = 0;  // along-drag past the wall (stored raw; carve clamps)
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Rejected = 0;  // a reshape that broke the connection -> reverted
 };
 
 class ADraftDeskGenerator;

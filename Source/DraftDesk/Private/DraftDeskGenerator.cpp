@@ -142,6 +142,36 @@ float ADraftDeskGenerator::RampRun(float DZ, const FDraftDeskMetrics& M)
 	return (TanA > KINDA_SMALL_NUMBER) ? DZ / TanA : DZ;
 }
 
+// ---- reshape gate (editor reshape asks: does this wall move still resolve?) -----------------
+
+bool ADraftDeskGenerator::ReshapeGatePasses(int32 A, int32 B) const
+{
+	if (!Spec) { return false; }
+	if (A < 0 || A >= AuthoredRooms.Num() || B < 0 || B >= AuthoredRooms.Num()) { return false; }
+	const FDraftDeskMetrics& M = Spec->Metrics;
+	const float GridXY = (M.GridSnap.X > KINDA_SMALL_NUMBER && M.GridSnap.Y > KINDA_SMALL_NUMBER)
+		? FMath::Min(M.GridSnap.X, M.GridSnap.Y) : FMath::Max(M.GridSnap.X, M.GridSnap.Y);
+
+	// face_connection is translation-invariant and, on a uniform grid, the snap is a no-op on the reshape
+	// output — so gating the raw AuthoredRooms gives the same verdict the post-normalize+snap rebuild will.
+	dd::Metrics dm; dm.grid = GridXY > KINDA_SMALL_NUMBER ? GridXY : 0.0; dm.wall_thickness = WallThickness;
+	std::vector<dd::Room> drooms;
+	drooms.reserve(AuthoredRooms.Num());
+	for (const FDdRoom& R : AuthoredRooms)
+	{
+		dd::Room r(R.Min.X, R.Min.Y, R.Max.X, R.Max.Y);
+		r.level = R.Level;
+		drooms.push_back(r);
+	}
+	dd::Shell S(std::move(drooms), {}, {}, dm); // rooms-only; face_connection needs no build()
+	int Axis; double pa, pb, lo, hi;
+	if (!S.faces_public(A, B, Axis, pa, pb, lo, hi)) { return false; }   // no longer face -> reject
+	if ((hi - lo) <= 1.0) { return false; }                              // lost positive overlap -> reject
+	const FDdRoom& RA = AuthoredRooms[A]; const FDdRoom& RB = AuthoredRooms[B];
+	if (RA.W() <= 1.f || RA.D() <= 1.f || RB.W() <= 1.f || RB.D() <= 1.f) { return false; } // degenerate -> reject
+	return true;
+}
+
 // ---- graph helpers (presets author through these) ------------------------
 
 int32 ADraftDeskGenerator::AddLevel(float BaseZ, float Height, float SlabT)
@@ -497,6 +527,20 @@ void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
 	for (const FDdLevel& L : Levels)
 	{
 		MinZ = FMath::Min(MinZ, L.BaseZ);
+	}
+
+	// FREEZE THE ORIGIN. Recomputing the shift from the entry room EVERY rebuild lets any edit that moves
+	// the entry room (e.g. reshaping a wall that bounds it) translate the whole layout — so a dragged
+	// marker snaps back by half the drag. Compute the shift ONCE (first build of the session) and reuse
+	// it; the world stays put under edits. ResetOrigin() re-derives it (explicit reset only). The cache is
+	// transient (not serialized), so a fresh level load re-derives from the loaded entry, then freezes.
+	if (bOriginCached)
+	{
+		Dx = CachedDx; Dy = CachedDy; MinZ = CachedMinZ;
+	}
+	else
+	{
+		CachedDx = Dx; CachedDy = Dy; CachedMinZ = MinZ; bOriginCached = true;
 	}
 
 	for (FDdLevel& L : Levels)

@@ -111,6 +111,15 @@ public:
 	/** Horizontal run of a ramp that climbs DZ at MaxStepTraversalAngle. Shared by preset + emitter. */
 	static float RampRun(float DZ, const FDraftDeskMetrics& M);
 
+	/** Reshape gate: true if rooms A,B still resolve a non-degenerate connection AFTER normalize+snap
+	 *  (validates the geometry the rebuild actually emits, not raw AuthoredRooms). Used by the editor
+	 *  reshape to accept/revert a wall move. */
+	bool ReshapeGatePasses(int32 A, int32 B) const;
+	/** WallThickness rounded up to a whole grid cell (the built wall gap T); for the editor reshape math. */
+	float GetBuiltWallT() const { return BuiltWallT; }
+	/** Re-derive the frozen normalize origin on the next build (explicit reset only). */
+	void ResetOrigin() { bOriginCached = false; }
+
 protected:
 	/** Boxes (walls/floors/ceilings/stairs/dais) — instances of one cube mesh. */
 	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
@@ -132,6 +141,11 @@ private:
 	// BuiltWallT is WallThickness rounded UP to a whole grid cell (>= one cell); BuiltSnap is the grid.
 	float BuiltWallT = 50.f;
 	FVector BuiltSnap = FVector(50.f, 50.f, 50.f);
+
+	// Frozen normalize origin (transient — not serialized): computed once per session in NormalizeToEntry,
+	// then reused so edits don't translate the world. ResetOrigin() clears it.
+	bool bOriginCached = false;
+	float CachedDx = 0.f, CachedDy = 0.f, CachedMinZ = 0.f;
 
 	void Rebuild();
 

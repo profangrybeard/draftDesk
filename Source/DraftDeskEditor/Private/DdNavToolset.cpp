@@ -153,6 +153,43 @@ namespace
 
 		if (GenLevel) { GenLevel->MarkPackageDirty(); }
 	}
+
+	// Reshape from a perpendicular drag: move the SHARED WALL between the threshold's two rooms by the
+	// (grid-snapped) perp delta, co-moving BOTH abutting facing edges so the one-cell wall follows. Gated
+	// by the engine (connection still resolves + rooms non-degenerate); reverts cleanly on fail. Port of
+	// dd_sync.reshape. Returns true if the reshape was applied. idx: 0 = const-X wall, 1 = const-Y wall.
+	bool TryReshape(ADraftDeskGenerator* Gen, int32 ti, int32 idx, double SignedPerp, double Grid)
+	{
+		if (ti < 0 || ti >= Gen->AuthoredThresholds.Num()) { return false; }
+		const FDdThreshold& Th = Gen->AuthoredThresholds[ti];
+		const int32 a = Th.RoomA, b = Th.RoomB;
+		if (b == INDEX_NONE || Th.Kind == EDdThresholdKind::Rail) { return false; } // interior only; rails don't reshape
+		if (a < 0 || a >= Gen->AuthoredRooms.Num() || b < 0 || b >= Gen->AuthoredRooms.Num()) { return false; }
+
+		const float Perp = (Grid > 1.0) ? FMath::GridSnap((float)SignedPerp, (float)Grid) : (float)SignedPerp;
+		if (FMath::IsNearlyZero(Perp)) { return false; }
+		const float T = Gen->GetBuiltWallT();
+		FDdRoom& RA = Gen->AuthoredRooms[a];
+		FDdRoom& RB = Gen->AuthoredRooms[b];
+		auto Comp = [idx](const FVector2D& V) { return idx == 0 ? V.X : V.Y; };
+		auto SetComp = [idx](FVector2D& V, float v) { if (idx == 0) { V.X = v; } else { V.Y = v; } };
+
+		const bool bALow = (Comp(RA.Min) + Comp(RA.Max)) < (Comp(RB.Min) + Comp(RB.Max));
+		const float PlaneA = bALow ? Comp(RA.Max) + T * 0.5f : Comp(RA.Min) - T * 0.5f;
+		const float PlaneB = bALow ? Comp(RB.Min) - T * 0.5f : Comp(RB.Max) + T * 0.5f;
+		const float NewPlane = (PlaneA + PlaneB) * 0.5f + Perp;
+
+		const FVector2D SA0 = RA.Min, SA1 = RA.Max, SB0 = RB.Min, SB1 = RB.Max; // save for revert
+		if (bALow) { SetComp(RA.Max, NewPlane - T * 0.5f); SetComp(RB.Min, NewPlane + T * 0.5f); }
+		else       { SetComp(RA.Min, NewPlane + T * 0.5f); SetComp(RB.Max, NewPlane - T * 0.5f); }
+
+		if (!Gen->ReshapeGatePasses(a, b))
+		{
+			RA.Min = SA0; RA.Max = SA1; RB.Min = SB0; RB.Max = SB1; // revert: connection broke / room degenerate
+			return false;
+		}
+		return true;
+	}
 }
 
 FDdReconcileReport UDdNavToolset::ReconcileMarkers(const FString& GeneratorPath)
@@ -227,12 +264,18 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 
 		// Project the drag delta onto the wall (relative to the last reconciled home — immune to the
 		// snapped plane drifting under the marker). axis 0 = const-X wall slides in Y; 1 = const-Y in X.
-		double AlongDelta, Perp;
-		if (*AxP == 0) { AlongDelta = Delta.Y; Perp = FMath::Sqrt(Delta.X * Delta.X + Delta.Z * Delta.Z); }
-		else           { AlongDelta = Delta.X; Perp = FMath::Sqrt(Delta.Y * Delta.Y + Delta.Z * Delta.Z); }
+		double AlongDelta, PerpH;
+		if (*AxP == 0) { AlongDelta = Delta.Y; PerpH = Delta.X; }   // const-X wall: along=Y, off-wall=X
+		else           { AlongDelta = Delta.X; PerpH = Delta.Y; }   // const-Y wall: along=X, off-wall=Y
 
-		if (Perp > PerpTol) { ++Report.Reshaped; continue; }             // perpendicular -> Stage-B (3b); reconcile snaps back
-		Th.Position += AlongDelta;                                       // RELATIVE fold; raw (carve re-clamps to the wall)
+		if (FMath::Abs(PerpH) > PerpTol)
+		{
+			// perpendicular off the wall -> RESHAPE: move the shared wall so both rooms reform around it
+			if (TryReshape(Gen, M->SourceThreshold, *AxP, PerpH, Grid)) { ++Report.Reshaped; }
+			else { ++Report.Rejected; } // connection would break / room degenerate -> reverted, marker snaps back
+			continue; // a tick is a reshape OR an along-slide, never both
+		}
+		Th.Position += AlongDelta; // along-wall slide (relative; carve re-clamps to the wall)
 		++Report.Folded;
 	}
 
