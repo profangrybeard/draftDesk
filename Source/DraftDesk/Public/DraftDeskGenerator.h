@@ -111,6 +111,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "draftDesk")
 	TObjectPtr<UInstancedStaticMeshComponent> Columns;
 
+	/** The engine's emitted openings (one per resolved threshold + per flight), recorded each rebuild.
+	 *  The single source of truth for where editable markers belong — tools read THIS, not a re-derivation. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	TArray<FDdOpening> Openings;
+
 private:
 	// --- transient build buffers (not reflected) ---
 	TArray<FDdLevel> Levels;

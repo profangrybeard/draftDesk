@@ -766,4 +766,35 @@ void ADraftDeskGenerator::Rebuild()
 	{
 		AddBox(B.Center, B.Size);
 	}
+
+	// --- record the engine's openings: one marker anchor per resolved threshold + per flight. This is
+	//     the source of truth tools read for "where does a marker belong"; the marker reconciler (next
+	//     slice) places exactly one marker at each of these, making marker<->opening bijective by build.
+	Openings.Reset();
+	for (const dd::OpeningPt& P : Shell.opening_points())
+	{
+		if (!P.resolved || P.thr < 0 || P.thr >= Thresholds.Num())
+		{
+			continue; // an unresolved threshold carved nothing -> no marker (matches the seed logic)
+		}
+		const FDdThreshold& Th = Thresholds[P.thr];
+		FDdOpening O;
+		O.Label = (Th.RoomB != INDEX_NONE)
+			? FString::Printf(TEXT("%d-%d"), Th.RoomA, Th.RoomB)
+			: (Th.bIsEntry ? FString(TEXT("entry")) : FString::Printf(TEXT("ext%d"), P.thr));
+		O.Kind = Th.Kind;
+		O.Position = FVector(P.x, P.y, P.z + 50.0); // +50 hover, matching the seeded marker height
+		Openings.Add(O);
+	}
+	for (int32 N = 0; N < Flights.Num(); ++N)
+	{
+		const FDdFlight& F = Flights[N];
+		const float Run = TotalRun(FMath::Abs(F.ToZ - F.FromZ), M);
+		const float UTop = F.StartU + F.Dir * Run; // where the top tread lands
+		FDdOpening O;
+		O.Label = FString::Printf(TEXT("flight%d"), N);
+		O.Kind = F.bRamp ? EDdThresholdKind::Ramp : EDdThresholdKind::Stairwell;
+		O.Position = FVector(F.bAlongX ? UTop : F.CrossV, F.bAlongX ? F.CrossV : UTop, F.ToZ + 50.0);
+		Openings.Add(O);
+	}
 }

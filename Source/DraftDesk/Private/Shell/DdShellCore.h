@@ -218,6 +218,10 @@ struct Flight {
     bool along_x; double start_u, cross_v, w, z0, z1; int dir; bool ramp; int thr;
 };
 
+// A marker anchor: the shell-frame point where a threshold's editable handle (marker) belongs.
+// One per threshold; resolved=false if the threshold doesn't face/resolve (so it carved nothing).
+struct OpeningPt { int thr; bool resolved; double x, y, z; };
+
 // A ready-to-place 3D box (cm). emit_boxes() returns one per solid output rect across all buckets.
 // kind: 0 = wall, 1 = floor-bearing slab (someone stands on it — always emit), 2 = ceiling/roof-only
 // slab (hideable for a top-down editor view; the watertight VALIDATION always sees the full shell).
@@ -353,6 +357,48 @@ public:
                     else                  out.push_back({ca, b.plane, cz, la, b.thick, hz, 0});  // const-Y, A=X
                 }
             }
+        }
+        return out;
+    }
+
+    // One marker anchor per threshold (shell-frame XY + floor Z), matching where a draggable handle
+    // sits on its opening. Mirrors Python dd_anchor.seeds(): unclamped centre + Position, plane = the
+    // wall centreline between the two rooms. The generator records these into a reflected array, so the
+    // gate (and, in the rebuild, the marker reconciler) read the ENGINE's truth, not a Python mirror.
+    std::vector<OpeningPt> opening_points() const {
+        std::vector<OpeningPt> out; out.reserve(thresholds.size());
+        const int n = (int)rooms.size();
+        for (size_t ti = 0; ti < thresholds.size(); ++ti) {
+            const Threshold& t = thresholds[ti];
+            OpeningPt o{(int)ti, false, 0, 0, 0};
+            const bool bad_a = !(t.room_a >= 0 && t.room_a < n);
+            const bool bad_b = (t.room_b != -1) && !(t.room_b >= 0 && t.room_b < n);
+            if (bad_a || bad_b) { out.push_back(o); continue; }
+            if (t.plane == HORIZONTAL) {                       // slab hole: anchor at the room centre + offsets
+                const Room& A = rooms[t.room_a];
+                o.x = (A.x0 + A.x1) / 2.0 + t.position;
+                o.y = (A.y0 + A.y1) / 2.0 + t.position2;
+                o.resolved = true;
+            } else if (t.room_b == -1) {                       // exterior: on the named edge
+                int cls; double pa, lo, hi; resolve_exterior(t, cls, pa, lo, hi);
+                const double along = (lo + hi) / 2.0 + t.position;
+                o.x = (cls == CLASS_X) ? pa : along;
+                o.y = (cls == CLASS_X) ? along : pa;
+                o.resolved = true;
+            } else {                                           // interior: the wall centreline between the rooms
+                int axis; double pa, pb, lo, hi;
+                if (face_connection(t.room_a, t.room_b, axis, pa, pb, lo, hi)) {
+                    const double plane = (pa + pb) / 2.0, along = (lo + hi) / 2.0 + t.position;
+                    o.x = (axis == CLASS_X) ? plane : along;
+                    o.y = (axis == CLASS_X) ? along : plane;
+                    o.resolved = true;
+                }
+            }
+            if (o.resolved) {
+                const int lvl = rooms[t.room_a].level;
+                o.z = (lvl >= 0 && lvl < (int)levels.size()) ? levels[lvl].base_z : 0.0;
+            }
+            out.push_back(o);
         }
         return out;
     }

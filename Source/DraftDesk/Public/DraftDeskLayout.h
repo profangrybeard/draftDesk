@@ -253,6 +253,28 @@ struct FDdFlight
 	bool bRamp = false;
 };
 
+/**
+ * A computed marker anchor: where the ENGINE says a threshold's (or flight's) editable handle belongs.
+ * The generator records one per resolved threshold + per flight on every rebuild, so tools read the
+ * engine's own openings (and the rebuild reconciles markers to them) instead of a Python re-derivation.
+ */
+USTRUCT(BlueprintType)
+struct FDdOpening
+{
+	GENERATED_BODY()
+
+	/** Stable identity: "A-B" (interior), "entry", "extI" (exterior), or "flightN". */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	FString Label;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	EDdThresholdKind Kind = EDdThresholdKind::Doorway;
+
+	/** Marker-anchor world position (actor-local cm, post-normalize). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	FVector Position = FVector::ZeroVector;
+};
+
 /** A raw solid block: dais / podium, crate, cover block, pillar, ledge lip, bridge segment. */
 USTRUCT(BlueprintType)
 struct FDraftDeskBlock

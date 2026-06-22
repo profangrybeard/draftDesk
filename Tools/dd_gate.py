@@ -18,6 +18,7 @@ that is the point — the gate measures the thing we actually care about, before
 import contextlib
 import importlib
 import io
+import math
 import sys
 
 sys.path.insert(0, "shell")
@@ -64,29 +65,63 @@ def run():
     return ddrun.run_text(READ)["labels"]
 
 
-def _model_elements(L):
-    """The set of things that MUST each have exactly one marker: every resolvable threshold + every
-    flight. seeds() already drops unresolved thresholds (no facing), matching what the engine carves."""
-    labels = [s["label"] for s in dd_anchor.seeds(L)]
-    labels += [f"flight{i}" for i in range(len(L.flights))]
-    return labels
+def _of(o, *keys):
+    for k in keys:
+        if isinstance(o, dict) and k in o:
+            return o[k]
+    return None
+
+
+def _engine_openings():
+    """The ENGINE's emitted openings (one per resolved threshold + per flight), read straight off the
+    generator's reflected Openings array. The engine's own truth — no Python re-derivation."""
+    READ = '''import json
+GET="editor_toolset.toolsets.object.ObjectTools.get_properties"
+GEN="{{GEN}}"
+def run():
+    pr=execute_tool(GET,json.dumps({"instance":{"refPath":GEN},"properties":["Openings"]}))["returnValue"]
+    pj=json.loads(pr) if isinstance(pr,str) else pr
+    return {"openings": (pj.get("Openings") or pj.get("openings") or []) if isinstance(pj,dict) else []}
+'''
+    return ddrun.run_text(READ)["openings"]
 
 
 def bijection(L):
-    expected = _model_elements(L)
+    ops = _engine_openings()
+    expected = {l for l in (_of(o, "Label", "label") for o in ops) if l is not None}
     live = _read_markers()
-    exp_set, live_counts = set(expected), {}
+    live_counts = {}
     for lab in live:
         live_counts[lab] = live_counts.get(lab, 0) + 1
-    missing = sorted(exp_set - set(live_counts))
-    orphan = sorted(set(live_counts) - exp_set)
+    missing = sorted(expected - set(live_counts))
+    orphan = sorted(set(live_counts) - expected)
     dup = sorted(l for l, n in live_counts.items() if n > 1)
     ok = not (missing or orphan or dup)
-    print(f"  1. BIJECTION   {'PASS' if ok else 'FAIL'}   (model elements {len(expected)}, live markers {len(live)})")
+    print(f"  1. BIJECTION   {'PASS' if ok else 'FAIL'}   (engine openings {len(expected)}, live markers {len(live)})")
     if missing: print(f"        threshold/flight with NO marker: {missing}")
-    if orphan:  print(f"        marker with NO model element:    {orphan}")
+    if orphan:  print(f"        marker with NO engine opening:   {orphan}")
     if dup:     print(f"        duplicate markers:               {dup}")
     return ok
+
+
+def oracle_drift_note(L):
+    """Informational: how far the OLD Python seed-model (dd_anchor.seeds) sits from the ENGINE's real
+    openings. The engine is AUTHORITATIVE — its openings are built from the same normalize+grid-snapped
+    geometry the walls are. Any delta here is the seed-model's error (it never replicated the snap), which
+    is exactly why dd_seedmarkers left markers floating off their openings. Slice 2 reconciles markers to
+    the engine and the delta vanishes by construction."""
+    ops = {}
+    for o in _engine_openings():
+        pos = _of(o, "Position", "position") or {}
+        ops[_of(o, "Label", "label")] = (pos.get("x", 0.0), pos.get("y", 0.0))
+    deltas = [math.hypot(ops[s["label"]][0] - s["x"], ops[s["label"]][1] - s["y"])
+              for s in dd_anchor.seeds(L) if s["label"] in ops]
+    if deltas:
+        n_off = sum(1 for d in deltas if d > 1.0)
+        print(f"  NOTE: the old Python seed-model is off the ENGINE's openings by up to {max(deltas):.0f} cm "
+              f"({n_off}/{len(deltas)} thresholds).")
+        print("        Engine is authoritative; markers seeded from the old model inherit that float — "
+              "slice 2 reconciles markers TO the engine and it vanishes.")
 
 
 def watertight(L):
@@ -124,4 +159,7 @@ def gate(L):
 if __name__ == "__main__":
     mod = sys.argv[1] if len(sys.argv) > 1 else "dd_castle"
     L = importlib.import_module(mod).L
-    raise SystemExit(0 if gate(L) else 1)
+    ok = gate(L)
+    print()
+    oracle_drift_note(L)    # informational: the old seed-model's offset from the engine's real openings
+    raise SystemExit(0 if ok else 1)

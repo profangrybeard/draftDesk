@@ -395,6 +395,12 @@ int main(int argc, char** argv) {
         bool boxes_ok = !boxes.empty();
         for (auto& b : boxes) if (!(b.sx > 0 && b.sy > 0 && b.sz > 0)) boxes_ok = false;
         report("emit_boxes: nonempty, all positive size (" + std::to_string(boxes.size()) + " boxes)", boxes_ok, {}, "degenerate box");
+
+        // opening_points: one anchor per threshold, all 24 castle thresholds resolve (none degenerate).
+        auto pts = s.opening_points();
+        int resolved = 0; for (auto& p : pts) if (p.resolved) ++resolved;
+        report("opening_points: one per threshold, all resolved (" + std::to_string(resolved) + "/24)",
+               (int)pts.size() == 24 && resolved == 24, {}, "opening_points count/resolved mismatch");
     }
 
     std::printf("\n%d/%d pass\n", g_total - g_fail, g_total);
