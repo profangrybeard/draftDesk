@@ -336,12 +336,14 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 		++Report.Folded;
 	}
 
-	// ROOM-HANDLE translate (slice B1): a dragged room handle moves the WHOLE space. Fold the drag as a
-	// relative delta from the handle's reconciled home (immune to the frozen origin), grid-snap the RESULT
-	// in the authored frame (a room on-grid stays on-grid; both corners share the residue so W/D are
-	// preserved), and translate the footprint. XY only here (Z->Level is slice C). Connections re-resolve on
-	// the rebuild below: a door that still abuts re-places; one now > one wall away goes unresolved (the
-	// gap-clamped face_connection) -> dormant -> nav catches the break. (New-abutment auto-gain is slice B2.)
+	// ROOM-HANDLE translate + auto-gain. A dragged room handle moves the WHOLE space; the drag folds as a
+	// relative delta from the handle's reconciled home (immune to the frozen origin), grid-snapped on the
+	// RESULT in the authored frame (a room on-grid stays on-grid, W/D preserved). XY only here (Z->Level is C).
+	//
+	// Phase 1: collect each dragged handle's delta and snapshot its pre-move same-level abutting set BEFORE
+	// any write, so a multi-handle drag compares against the original (uncontaminated) frame.
+	struct FMovedRoom { int32 RoomIndex; float Dx; float Dy; TSet<int32> Before; };
+	TArray<FMovedRoom> Moved;
 	for (TActorIterator<ADraftDeskRoomHandle> It(World); It; ++It)
 	{
 		ADraftDeskRoomHandle* H = *It;
@@ -350,13 +352,41 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 		if (RI < 0 || RI >= Gen->AuthoredRooms.Num()) { continue; }
 		const FVector Delta = GenXform.InverseTransformPosition(H->GetActorLocation()) - H->ReconciledLocation;
 		if (FVector2D(Delta.X, Delta.Y).Size() <= DragEps) { continue; }   // no fresh XY drag
-		FDdRoom& R = Gen->AuthoredRooms[RI];
+		FMovedRoom MR; MR.RoomIndex = RI; MR.Dx = (float)Delta.X; MR.Dy = (float)Delta.Y;
+		TArray<int32> Ab; Gen->AbuttingRooms(RI, Ab); MR.Before.Append(Ab);
+		Moved.Add(MR);
+	}
+	// Phase 2: apply every translate (grid-snap the RESULT in the authored frame).
+	{
 		auto SnapAuthored = [Grid](float v) { return (Grid > 1.0) ? FMath::GridSnap(v, (float)Grid) : v; };
-		R.Min.X = SnapAuthored(R.Min.X + (float)Delta.X);
-		R.Max.X = SnapAuthored(R.Max.X + (float)Delta.X);
-		R.Min.Y = SnapAuthored(R.Min.Y + (float)Delta.Y);
-		R.Max.Y = SnapAuthored(R.Max.Y + (float)Delta.Y);
-		++Report.RoomTranslated;
+		for (const FMovedRoom& MR : Moved)
+		{
+			FDdRoom& R = Gen->AuthoredRooms[MR.RoomIndex];
+			R.Min.X = SnapAuthored(R.Min.X + MR.Dx); R.Max.X = SnapAuthored(R.Max.X + MR.Dx);
+			R.Min.Y = SnapAuthored(R.Min.Y + MR.Dy); R.Max.Y = SnapAuthored(R.Max.Y + MR.Dy);
+			++Report.RoomTranslated;
+		}
+	}
+	// Phase 3: AUTO-GAIN a Doorway on any NEWLY-formed same-level abutment (after \ before), unless the pair
+	// is already wall-connected. Canonical (min,max) pair so the ordered opening label is stable and the
+	// existence guard dedups a re-abut. Seed the fresh index into Seen so the DELETE sweep can't dissolve a
+	// marker-less brand-new threshold this pass; it resolves + gets a marker on the rebuild. (A door that
+	// DETACHED stays dormant; this only ADDS, per the detach+reconnect model. New-abutment = a Doorway.)
+	for (const FMovedRoom& MR : Moved)
+	{
+		TArray<int32> After; Gen->AbuttingRooms(MR.RoomIndex, After);
+		for (int32 Other : After)
+		{
+			if (MR.Before.Contains(Other)) { continue; }                 // not a NEW abutment
+			const int32 A = FMath::Min(MR.RoomIndex, Other), B = FMath::Max(MR.RoomIndex, Other);
+			if (Gen->VerticalLinkExists(A, B)) { continue; }             // already connected -> no dup
+			FDdThreshold Door;
+			Door.RoomA = A; Door.RoomB = B;
+			Door.Kind = EDdThresholdKind::Doorway; Door.Plane = EDdPlaneClass::Vertical;
+			const int32 NewIdx = Gen->AuthoredThresholds.Add(Door);
+			Seen.Add(NewIdx);
+			++Report.Gained;
+		}
 	}
 
 	// DELETE sweep: an interior threshold with no live marker dissolves to a full-clear Passage. Merging

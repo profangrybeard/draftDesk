@@ -121,6 +121,13 @@ public:
 	 *  (validates the geometry the rebuild actually emits, not raw AuthoredRooms). Used by the editor
 	 *  reshape to accept/revert a wall move. */
 	bool ReshapeGatePasses(int32 A, int32 B) const;
+	/** The SAME-LEVEL rooms RoomIdx currently abuts (gap ~ T via the clamped face_connection, real overlap),
+	 *  computed on raw AuthoredRooms (== post-snap on a uniform grid, like ReshapeGatePasses). The auto-gain
+	 *  oracle: it agrees bit-for-bit with how a real threshold will resolve on the rebuild. */
+	void AbuttingRooms(int32 RoomIdx, TArray<int32>& Out) const;
+	/** True if a WALL connection (Doorway/Passage/Window) already exists between A and B (unordered pair).
+	 *  The auto-gain existence guard, so re-abutting an already-connected pair adds nothing. */
+	bool VerticalLinkExists(int32 A, int32 B) const;
 	/** WallThickness rounded up to a whole grid cell (the built wall gap T); for the editor reshape math. */
 	float GetBuiltWallT() const { return BuiltWallT; }
 	/** Re-derive the frozen normalize origin on the next build (explicit reset only). */

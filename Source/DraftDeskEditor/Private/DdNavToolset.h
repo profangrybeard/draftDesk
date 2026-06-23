@@ -55,6 +55,7 @@ struct FDdReconcileReport
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 RoomDeleted = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 RoomTotal = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 RoomTranslated = 0;  // rooms a handle-drag moved this pass
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Gained = 0;          // doorways auto-created on a new abutment
 };
 
 class ADraftDeskGenerator;

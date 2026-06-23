@@ -172,6 +172,37 @@ bool ADraftDeskGenerator::ReshapeGatePasses(int32 A, int32 B) const
 	return true;
 }
 
+void ADraftDeskGenerator::AbuttingRooms(int32 RoomIdx, TArray<int32>& Out) const
+{
+	Out.Reset();
+	if (!Spec || RoomIdx < 0 || RoomIdx >= AuthoredRooms.Num()) { return; }
+	const FDraftDeskMetrics& M = Spec->Metrics;
+	const float GridXY = (M.GridSnap.X > KINDA_SMALL_NUMBER && M.GridSnap.Y > KINDA_SMALL_NUMBER)
+		? FMath::Min(M.GridSnap.X, M.GridSnap.Y) : FMath::Max(M.GridSnap.X, M.GridSnap.Y);
+	dd::Metrics dm; dm.grid = GridXY > KINDA_SMALL_NUMBER ? GridXY : 0.0; dm.wall_thickness = WallThickness;
+	std::vector<dd::Room> drooms; drooms.reserve(AuthoredRooms.Num());
+	for (const FDdRoom& R : AuthoredRooms) { dd::Room r(R.Min.X, R.Min.Y, R.Max.X, R.Max.Y); r.level = R.Level; drooms.push_back(r); }
+	dd::Shell S(std::move(drooms), {}, {}, dm); // rooms-only; face_connection needs no build()
+	const int32 MyLevel = AuthoredRooms[RoomIdx].Level;
+	for (int32 J = 0; J < AuthoredRooms.Num(); ++J)
+	{
+		if (J == RoomIdx || AuthoredRooms[J].Level != MyLevel) { continue; } // same-level only (B2 is XY)
+		int Axis; double pa, pb, lo, hi;
+		if (S.faces_public(RoomIdx, J, Axis, pa, pb, lo, hi) && (hi - lo) > 1.0) { Out.Add(J); }
+	}
+}
+
+bool ADraftDeskGenerator::VerticalLinkExists(int32 A, int32 B) const
+{
+	for (const FDdThreshold& T : AuthoredThresholds)
+	{
+		if (T.Plane != EDdPlaneClass::Vertical) { continue; }
+		if (T.Kind != EDdThresholdKind::Doorway && T.Kind != EDdThresholdKind::Passage && T.Kind != EDdThresholdKind::Window) { continue; }
+		if ((T.RoomA == A && T.RoomB == B) || (T.RoomA == B && T.RoomB == A)) { return true; }
+	}
+	return false;
+}
+
 // ---- graph helpers (presets author through these) ------------------------
 
 int32 ADraftDeskGenerator::AddLevel(float BaseZ, float Height, float SlabT)
