@@ -16,11 +16,20 @@ ADraftDeskThreshold::ADraftDeskThreshold()
 	Icon->bHiddenInGame = true;
 
 #if WITH_EDITORONLY_DATA
-	static ConstructorHelpers::FObjectFinder<UTexture2D> SpriteTex(TEXT("/Engine/EditorResources/S_TargetPoint.S_TargetPoint"));
-	if (SpriteTex.Succeeded())
-	{
-		Icon->SetSprite(SpriteTex.Object);
-	}
+	static ConstructorHelpers::FObjectFinder<UTexture2D> ValidTex(TEXT("/Engine/EditorResources/S_TargetPoint.S_TargetPoint"));
+	static ConstructorHelpers::FObjectFinder<UTexture2D> InvalidTex(TEXT("/Engine/EditorResources/S_Note.S_Note"));
+	ValidSprite = ValidTex.Succeeded() ? ValidTex.Object : nullptr;
+	InvalidSprite = InvalidTex.Succeeded() ? InvalidTex.Object : nullptr;   // distinct "invalid" glyph (red-X texture is a follow-up)
+	if (ValidSprite) { Icon->SetSprite(ValidSprite); }
 	Icon->bIsScreenSizeScaled = true; // stays a readable size at any zoom, like other editor icons
+#endif
+}
+
+void ADraftDeskThreshold::RefreshInvalidVisual()
+{
+#if WITH_EDITORONLY_DATA
+	if (!Icon) { return; }
+	UTexture2D* const Want = bInvalid ? InvalidSprite : ValidSprite;   // a broken connection reads distinct, not gone
+	if (Want) { Icon->SetSprite(Want); }
 #endif
 }

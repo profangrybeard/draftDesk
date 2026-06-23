@@ -89,6 +89,11 @@ namespace
 			Desired.Add(Key, &O);
 		}
 
+		// Every threshold that resolved this rebuild (has an opening). A marker whose SourceThreshold is NOT
+		// here but still names a live interior threshold is DORMANT (red-X invalid), not a true orphan.
+		TSet<int32> ResolvedSrc;
+		for (const FDdOpening& O : Openings) { if (O.SourceThreshold >= 0) { ResolvedSrc.Add(O.SourceThreshold); } }
+
 		TArray<ADraftDeskThreshold*> Markers;
 		for (TActorIterator<ADraftDeskThreshold> It(World); It; ++It)
 		{
@@ -113,12 +118,32 @@ namespace
 				{
 					++Report.Kept; continue; // entry/rail oscillate; never deleted on a transient miss
 				}
-				M->Modify(); World->EditorDestroyActor(M, true); ++Report.Deleted; continue;
+				// DORMANT -> red-X INVALID: its threshold still exists but didn't resolve this rebuild (rooms
+				// moved apart). KEEP the marker on screen, flag it, park it inside the owner room so it's always
+				// grabbable -- a broken connection never silently vanishes. (Was an unconditional delete.)
+				const int32 St = M->SourceThreshold;
+				if (St >= 0 && St < Gen->AuthoredThresholds.Num() && !ResolvedSrc.Contains(St))
+				{
+					const FDdThreshold& Th = Gen->AuthoredThresholds[St];
+					if (Th.RoomB != INDEX_NONE && !Th.bIsEntry && Th.Kind != EDdThresholdKind::Rail)
+					{
+						M->Modify();
+						if (!M->bInvalid) { M->bInvalid = true; M->RefreshInvalidVisual(); }
+						if (Gen->DormantAnchors.IsValidIndex(St) && !Gen->DormantAnchors[St].IsZero())
+						{
+							M->SetActorLocation(GenXform.TransformPosition(Gen->DormantAnchors[St]));
+						}
+						Home(M);
+						++Report.Invalid; continue;
+					}
+				}
+				M->Modify(); World->EditorDestroyActor(M, true); ++Report.Deleted; continue; // true orphan (threshold gone)
 			}
 			if (Claimed.Contains(L)) { M->Modify(); World->EditorDestroyActor(M, true); ++Report.Deleted; continue; }
 			Claimed.Add(L);
 			const FDdOpening& O = **Found;
 			M->Modify();
+			if (M->bInvalid) { M->bInvalid = false; M->RefreshInvalidVisual(); } // resolved again -> back to valid
 			M->SourceThreshold = O.SourceThreshold; M->SourceFlight = O.SourceFlight;
 			M->SetLockLocation(O.SourceFlight >= 0); // flights are DERIVED geometry — lock their markers (not draggable)
 			const FVector CurLocal = GenXform.InverseTransformPosition(M->GetActorLocation());

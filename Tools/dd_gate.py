@@ -49,6 +49,8 @@ def _full_shell(L):
 
 
 def _read_markers():
+    """Live threshold markers -> [{label, invalid}]. Reads bInvalid so the bijection can tell a red-X (a
+    known, mid-iteration broken connection) from a true orphan (a marker whose threshold is gone)."""
     READ = '''import json
 FIND="editor_toolset.toolsets.scene.SceneTools.find_actors"
 GET="editor_toolset.toolsets.object.ObjectTools.get_properties"
@@ -57,12 +59,12 @@ def run():
     acts=execute_tool(FIND,json.dumps({"name":"","tag":"","collision_channels":[],"actor_type":{"refPath":CLS}}))["returnValue"]
     out=[]
     for a in acts:
-        pr=execute_tool(GET,json.dumps({"instance":{"refPath":a["refPath"]},"properties":["Label","Kind"]}))["returnValue"]
+        pr=execute_tool(GET,json.dumps({"instance":{"refPath":a["refPath"]},"properties":["Label","bInvalid"]}))["returnValue"]
         pj=json.loads(pr) if isinstance(pr,str) else pr
-        out.append(pj.get("Label",""))
-    return {"labels":out}
+        out.append({"label":str(pj.get("Label","")),"invalid":bool(pj.get("bInvalid",False))})
+    return {"markers":out}
 '''
-    return ddrun.run_text(READ)["labels"]
+    return ddrun.run_text(READ)["markers"]
 
 
 def _read_handles():
@@ -114,21 +116,24 @@ def bijection(L):
         lab = _of(o, "Label", "label")
         if lab is not None:
             exp[lab] = exp.get(lab, 0) + 1
-    live = _read_markers()
+    markers = _read_markers()
+    invalid = sorted(m["label"] for m in markers if m["invalid"])               # red-X: broken-but-visible connections
     liv = {}
-    for lab in live:
-        liv[lab] = liv.get(lab, 0) + 1
+    for m in markers:
+        if not m["invalid"]:                                                   # multiset on VALID markers only --
+            liv[m["label"]] = liv.get(m["label"], 0) + 1                       # an invalid marker has no opening + must not read as an orphan
     labels = set(exp) | set(liv)
     missing = sorted(l for l in labels if liv.get(l, 0) < exp.get(l, 0))       # opening(s) with too few markers
-    orphan = sorted(l for l in labels if l not in exp)                          # marker with no opening
+    orphan = sorted(l for l in labels if l not in exp)                          # marker with no opening (true orphan)
     over = sorted(l for l in labels if l in exp and liv.get(l, 0) > exp.get(l, 0))  # too many markers
     collide = sorted(l for l, n in exp.items() if n > 1)                        # two openings, one label (build bug)
-    ok = not (missing or orphan or over or collide)
-    print(f"  1. BIJECTION   {'PASS' if ok else 'FAIL'}   (engine openings {sum(exp.values())}, live markers {len(live)})")
+    ok = not (missing or orphan or over or collide or invalid)                  # a live red-X blocks GREEN: finish or remove it
+    print(f"  1. BIJECTION   {'PASS' if ok else 'FAIL'}   (engine openings {sum(exp.values())}, live markers {sum(liv.values())} valid + {len(invalid)} invalid)")
     if missing:  print(f"        opening with NO marker:          {missing}")
     if orphan:   print(f"        marker with NO engine opening:   {orphan}")
     if over:     print(f"        too many markers for opening:    {over}")
-    if collide:  print(f"        COLLIDING opening labels (two thresholds share a wall — needs slice-3 SourceId): {collide}")
+    if collide:  print(f"        COLLIDING opening labels (two thresholds share a wall — needs SourceId re-key): {collide}")
+    if invalid:  print(f"        INVALID (red-X) — re-place onto a wall or delete: {invalid}")
     return ok
 
 

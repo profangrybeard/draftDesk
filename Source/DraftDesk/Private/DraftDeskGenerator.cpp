@@ -894,6 +894,7 @@ void ADraftDeskGenerator::Rebuild()
 	//     handle's RoomIndex is a valid AuthoredRooms index the move pass can translate. Engine frame so
 	//     the handle never re-derives normalize+snap. Custom-only: preset rooms are re-authored each build.
 	RoomAnchors.Reset();
+	DormantAnchors.Reset();
 	if (Preset == EDraftDeskPreset::Custom)
 	{
 		for (const FDdRoom& R : Rooms)
@@ -901,6 +902,24 @@ void ADraftDeskGenerator::Rebuild()
 			const float Fz = (R.FloorZ >= 0.f) ? R.FloorZ
 				: (Levels.IsValidIndex(R.Level) ? Levels[R.Level].BaseZ : 0.f);
 			RoomAnchors.Add(FVector(R.CX(), R.CY(), Fz + 50.0));
+		}
+		// One dormant anchor per threshold, INSIDE the owner room (RoomA), nudged toward RoomB, so a broken
+		// connection's red-X marker is always on-screen + grabbable (its opening is gone, so it has no other
+		// home). Index-aligned to Thresholds (== AuthoredThresholds for Custom). Zero => not anchorable.
+		for (const FDdThreshold& Th : Thresholds)
+		{
+			FVector Anchor = FVector::ZeroVector;
+			if (Th.RoomB != INDEX_NONE && Rooms.IsValidIndex(Th.RoomA) && Rooms.IsValidIndex(Th.RoomB))
+			{
+				const FDdRoom& A = Rooms[Th.RoomA]; const FDdRoom& B = Rooms[Th.RoomB];
+				const float Fz = (A.FloorZ >= 0.f) ? A.FloorZ
+					: (Levels.IsValidIndex(A.Level) ? Levels[A.Level].BaseZ : 0.f);
+				FVector2D Dir(B.CX() - A.CX(), B.CY() - A.CY());
+				if (!Dir.IsNearlyZero()) { Dir.Normalize(); }
+				const float Off = FMath::Min(A.W(), A.D()) * 0.35f;   // partway out, still inside RoomA
+				Anchor = FVector(A.CX() + Dir.X * Off, A.CY() + Dir.Y * Off, Fz + 50.0);
+			}
+			DormantAnchors.Add(Anchor);
 		}
 	}
 }

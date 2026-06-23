@@ -42,6 +42,8 @@ struct FDdReconcileReport
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Total = 0;
 	/** Colliding opening labels kept-first (two thresholds share a wall) — a loud build smell; 0 normally. */
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Duplicates = 0;
+	/** Markers kept as red-X INVALID (a connection went dormant; not deleted, not orphan) — the broken-but-visible state. */
+	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Invalid = 0;
 	// SyncDrags-only buckets:
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Folded = 0;    // drags folded into the model (slide)
 	UPROPERTY(BlueprintReadOnly, Category = "DdNav") int32 Reshaped = 0;  // perpendicular drags deferred to 3b

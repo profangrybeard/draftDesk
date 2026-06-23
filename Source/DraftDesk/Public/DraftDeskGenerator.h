@@ -99,6 +99,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	TArray<FVector> RoomAnchors;
 
+	/** Where a DORMANT (invalid/red-X) threshold's marker parks when its connection no longer resolves: inside
+	 *  the owner room (RoomA), partway toward RoomB, so it is always on-screen + grabbable. Index-aligned to
+	 *  AuthoredThresholds (normalized-local frame, Custom only). Zero = not anchorable (leave the marker put). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
+	TArray<FVector> DormantAnchors;
+
 	/** Bumped once per ReconcileMarkers pass; the loop-closed proof the iterative gate asserts advanced. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "draftDesk")
 	int32 ReconcileSerial = 0;

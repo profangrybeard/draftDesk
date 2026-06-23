@@ -6,6 +6,7 @@
 #include "DraftDeskThreshold.generated.h"
 
 class UBillboardComponent;
+class UTexture2D;
 
 /**
  * An author-movable threshold anchor — the authoring surface for draftDesk.
@@ -81,8 +82,23 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Threshold")
 	int32 ReconcileSerial = 0;
 
+	/** INVALID (red-X): this connection's rooms moved apart so it no longer resolves. The marker is kept on
+	 *  screen (not deleted) showing a distinct icon, so a broken connection is always visible + grabbable —
+	 *  drag it onto a valid wall to re-place, or delete it to remove. Set by the reconciler. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Threshold")
+	bool bInvalid = false;
+
+	/** Swap the icon to the invalid (red-X) sprite when bInvalid, the normal doorway sprite otherwise. */
+	void RefreshInvalidVisual();
+
 protected:
 	/** Camera-facing editor icon; the actor's movable root (select it for the gizmo). */
 	UPROPERTY(VisibleAnywhere, Category = "Threshold")
 	TObjectPtr<UBillboardComponent> Icon;
+
+#if WITH_EDITORONLY_DATA
+	/** The normal + invalid sprites; RefreshInvalidVisual swaps between them. */
+	UPROPERTY() TObjectPtr<UTexture2D> ValidSprite;
+	UPROPERTY() TObjectPtr<UTexture2D> InvalidSprite;
+#endif
 };
