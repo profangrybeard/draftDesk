@@ -184,6 +184,7 @@ namespace
 		const TArray<FVector>& Anchors = Gen->RoomAnchors;
 		auto HomeHandle = [&](ADraftDeskRoomHandle* H)
 		{
+			if (!H->GetActorScale3D().Equals(FVector::OneVector)) { H->SetActorScale3D(FVector::OneVector); } // a SCALE-resize is consumed; the handle is an anchor (residual scale would re-fire as a phantom resize)
 			H->ReconciledLocation = GenXform.InverseTransformPosition(H->GetActorLocation());
 			H->ReconcileSerial = Gen->ReconcileSerial;
 		};
@@ -367,7 +368,7 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 	//
 	// Phase 1: collect each dragged handle's delta and snapshot its pre-move same-level abutting set BEFORE
 	// any write, so a multi-handle drag compares against the original (uncontaminated) frame.
-	struct FMovedRoom { int32 RoomIndex; float Dx; float Dy; TSet<int32> Before; };
+	struct FMovedRoom { int32 RoomIndex; float Dx; float Dy; float Sx; float Sy; TSet<int32> Before; };
 	TArray<FMovedRoom> Moved;
 	for (TActorIterator<ADraftDeskRoomHandle> It(World); It; ++It)
 	{
@@ -375,21 +376,51 @@ FDdReconcileReport UDdNavToolset::SyncDrags(const FString& GeneratorPath)
 		if (H->GetLevel() != GenLevel) { continue; }
 		const int32 RI = H->RoomIndex;
 		if (RI < 0 || RI >= Gen->AuthoredRooms.Num()) { continue; }
+		const FVector Scale = H->GetActorScale3D();
+		if (FMath::Abs(Scale.X - 1.0) > 0.01 || FMath::Abs(Scale.Y - 1.0) > 0.01)
+		{
+			// SCALE gizmo -> RESIZE the room about its centre. Read the scale, consume it (reset to 1). A
+			// gizmo is in one mode per tick, so a handle is either scaled OR translated, never both.
+			FMovedRoom MR; MR.RoomIndex = RI; MR.Dx = 0.f; MR.Dy = 0.f;
+			MR.Sx = FMath::Max(0.01f, (float)Scale.X); MR.Sy = FMath::Max(0.01f, (float)Scale.Y);
+			TArray<int32> Ab; Gen->AbuttingRooms(RI, Ab); MR.Before.Append(Ab);
+			Moved.Add(MR);
+			H->Modify(); H->SetActorScale3D(FVector::OneVector);
+			continue;
+		}
 		const FVector Delta = GenXform.InverseTransformPosition(H->GetActorLocation()) - H->ReconciledLocation;
 		if (FVector2D(Delta.X, Delta.Y).Size() <= DragEps) { continue; }   // no fresh XY drag
-		FMovedRoom MR; MR.RoomIndex = RI; MR.Dx = (float)Delta.X; MR.Dy = (float)Delta.Y;
+		FMovedRoom MR; MR.RoomIndex = RI; MR.Dx = (float)Delta.X; MR.Dy = (float)Delta.Y; MR.Sx = 1.f; MR.Sy = 1.f;
 		TArray<int32> Ab; Gen->AbuttingRooms(RI, Ab); MR.Before.Append(Ab);
 		Moved.Add(MR);
 	}
 	// Phase 2: apply every translate (grid-snap the RESULT in the authored frame).
 	{
 		auto SnapAuthored = [Grid](float v) { return (Grid > 1.0) ? FMath::GridSnap(v, (float)Grid) : v; };
+		const float G = (float)FMath::Max(Grid, 1.0);
 		for (const FMovedRoom& MR : Moved)
 		{
 			FDdRoom& R = Gen->AuthoredRooms[MR.RoomIndex];
-			R.Min.X = SnapAuthored(R.Min.X + MR.Dx); R.Max.X = SnapAuthored(R.Max.X + MR.Dx);
-			R.Min.Y = SnapAuthored(R.Min.Y + MR.Dy); R.Max.Y = SnapAuthored(R.Max.Y + MR.Dy);
-			++Report.RoomTranslated;
+			if (MR.Sx != 1.f || MR.Sy != 1.f)
+			{
+				// RESIZE about centre. Snap the two FACES (NOT the half-extent): both edges land on-grid for
+				// ANY room -- incl. an odd-cell-width room whose centre is a half-cell -- so AuthoredRooms ==
+				// the rebuild's snapped Rooms and the gate's authored frame cannot diverge from the built frame
+				// (the cross-frame corruption the adversarial pass found). Centre drifts <= half a cell; honest.
+				const float Cx = R.CX(), Cy = R.CY();
+				const float Hx = R.W() * 0.5f * MR.Sx, Hy = R.D() * 0.5f * MR.Sy;
+				R.Min.X = SnapAuthored(Cx - Hx); R.Max.X = SnapAuthored(Cx + Hx);
+				R.Min.Y = SnapAuthored(Cy - Hy); R.Max.Y = SnapAuthored(Cy + Hy);
+				if (R.Max.X - R.Min.X < G) { R.Max.X = R.Min.X + G; }   // one-cell floor AFTER the snap (never collapse)
+				if (R.Max.Y - R.Min.Y < G) { R.Max.Y = R.Min.Y + G; }
+				++Report.RoomResized;
+			}
+			else
+			{
+				R.Min.X = SnapAuthored(R.Min.X + MR.Dx); R.Max.X = SnapAuthored(R.Max.X + MR.Dx);
+				R.Min.Y = SnapAuthored(R.Min.Y + MR.Dy); R.Max.Y = SnapAuthored(R.Max.Y + MR.Dy);
+				++Report.RoomTranslated;
+			}
 		}
 	}
 	// Phase 3: AUTO-GAIN a Doorway on any NEWLY-formed same-level abutment (after \ before), unless the pair
