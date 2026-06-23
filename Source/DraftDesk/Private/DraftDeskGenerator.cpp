@@ -554,6 +554,15 @@ void ADraftDeskGenerator::NormalizeToEntry(const FDraftDeskMetrics& M)
 		break;
 	}
 
+	// Snap the shift to the grid. The entry doorway sits a half-wall off the grid line (edge +/- T/2), which
+	// would put every room edge exactly on the snap .5-boundary after the shift -- and a hair of save/load
+	// float drift then tips ~2 of them a whole cell on RELOAD, silently breaking their abutments (the clamp
+	// then refuses to resolve across the widened gap). Snapping the shift lands the normalized layout ON the
+	// grid, so SnapLayoutToGrid is a deterministic no-op and the level reloads byte-identically. The whole
+	// layout moves at most T/2 (the doorway-to-grid-line offset) -- uniform, so every gap is preserved.
+	if (M.GridSnap.X > KINDA_SMALL_NUMBER) { Dx = FMath::GridSnap(Dx, M.GridSnap.X); }
+	if (M.GridSnap.Y > KINDA_SMALL_NUMBER) { Dy = FMath::GridSnap(Dy, M.GridSnap.Y); }
+
 	float MinZ = Levels.Num() > 0 ? Levels[0].BaseZ : 0.f;
 	for (const FDdLevel& L : Levels)
 	{

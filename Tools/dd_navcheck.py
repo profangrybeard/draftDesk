@@ -47,6 +47,11 @@ def _shift(L):
         elif e == "South": dx, dy = cx, a["Min"][1] - T / 2
         else:              dx, dy = cx, a["Max"][1] + T / 2
         break
+    # Match the engine: NormalizeToEntry snaps the shift to the grid (away from zero, like FMath::GridSnap)
+    # so the normalized layout lands on-grid and reloads identically.
+    snap = L.snap if getattr(L, "snap", 0) and L.snap > 0 else 50.0
+    g = lambda v: (math.floor(v / snap + 0.5) if v >= 0 else math.ceil(v / snap - 0.5)) * snap
+    dx, dy = g(dx), g(dy)
     minz = min((lv["BaseZ"] for lv in L.levels), default=0.0)
     return dx, dy, minz
 
